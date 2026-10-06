@@ -15,6 +15,21 @@ __pycache__/
 !/docs/preview/**
 !/docs/versions/
 !/docs/versions/**
+!/docs/reference/
+!/docs/reference/**
+!/docs/adr/
+!/docs/adr/**
+!/docs/spec/
+!/docs/spec/**
+!/docs/plan/
+!/docs/plan/**
+!/docs/debug/
+!/docs/debug/**
+!/docs/audit/
+!/docs/audit/**
+!/docs/tmp/
+!/docs/tmp/**
+/docs/tmp/*-scratch/
 /.local/
 /backlog
 

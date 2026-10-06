@@ -1,3 +1,18 @@
+# sshdr fork
+
+This repository is sshdr, a fork of herdr. These fork rules take precedence over the herdr
+sections below.
+
+- Documentation entry point: [`CONTEXT.md`](CONTEXT.md). Vocabulary:
+  [`docs/reference/glossary.md`](docs/reference/glossary.md).
+- `main` is the Mainline and default branch; `master` only mirrors `upstream/master`. Sync
+  procedure: [`docs/reference/upstream-sync.md`](docs/reference/upstream-sync.md).
+- Record sshdr changes in `CHANGELOG.sshdr.md`; never edit root `CHANGELOG.md`.
+- The sshdr owner is not a herdr maintainer: skip Maintainer Workflow, Local Can Machine Workflow,
+  and Release Channels; follow the External contributor guardrail for anything sent to
+  `herdrdev/herdr`.
+- Open work lives in [`docs/plan/BACKLOG.md`](docs/plan/BACKLOG.md).
+
 # herdr
 
 Terminal based agent runtime for coding agents.
