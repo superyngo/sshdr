@@ -5,6 +5,8 @@ investigation — lives in `../spec/`, `../plan/`, `../debug/`, or `../audit/`, 
 
 - **[glossary.md](glossary.md)** — canonical vocabulary; read first.
 - **[upstream-sync.md](upstream-sync.md)** — branch model and how **Upstream** changes are merged.
+- **[server-client-remote.md](server-client-remote.md)** — process topology, **Server**/**Client**
+  responsibilities, and the three remote paths (`--remote`, saved **Machines**, `--machine`).
 
 Inherited herdr user documentation stays in [`../next/`](../next/README.md) (unreleased) and
 `../versions/` (published); see [ADR 0002](../adr/0002-docs-layout-coexists-with-upstream.md).

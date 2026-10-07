@@ -50,6 +50,29 @@ _Avoid_: remote, server (for this concept), host.
 The identity of a connection source for a **Client**: local, or one **Machine**.
 _Avoid_: target (for this concept).
 
+**Bridge**:
+The `herdr remote-client-bridge` or `herdr remote-api-bridge` process started over SSH on a
+**Machine**, piping SSH stdio to that **Server**'s client or API socket.
+_Avoid_: tunnel, proxy.
+
+**Shell Snapshot**:
+The `ClientShellSnapshot` a **Server** sends to a **Client**: semantic session data (workspaces,
+tabs, panes, agents, keybindings) from which the **Client** draws its chrome.
+_Avoid_: state dump.
+
+**Pane Surface**:
+The rendered cell grid of panes (`PaneSurfaceFrame`/`PaneSurfacePatch`) a **Server** streams to
+the **Client** for the selected **Endpoint** only.
+_Avoid_: screen, framebuffer.
+
+## TUI
+
+**Component Kit**:
+The planned sshdr-owned set of reusable **Client** TUI components (list, panel, button, popup
+placement, text) that new screens are built from; requirements in
+[`../spec/2026-10-07-tui-component-kit.md`](../spec/2026-10-07-tui-component-kit.md).
+_Avoid_: widget library, UI framework.
+
 ## Fleet
 
 **Fleet**:

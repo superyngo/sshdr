@@ -5,7 +5,9 @@ never rewritten. Current behavior lives in [`../reference/`](../reference/README
 
 ## In progress
 
-None.
+| Date | Document | Status |
+|---|---|---|
+| 2026-10-07 | [TUI 元件清點與模組化評估](2026-10-07-tui-components.md) | Draft — 等待決策 |
 
 ## Landed
 
