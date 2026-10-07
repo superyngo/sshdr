@@ -8,3 +8,4 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 |---|---|---|
 | [0001](0001-fork-branch-model.md) | `master` mirrors Upstream; `main` is the Mainline and default branch | Implemented (2026-10-06) |
 | [0002](0002-docs-layout-coexists-with-upstream.md) | sshdr docs layout coexists with Upstream-owned docs and root files | Implemented (2026-10-06) |
+| [0003](0003-fleet-hosts-are-machines.md) | Every Fleet Host is a herdr Machine; Fleet Operations run through herdr Servers | Accepted (2026-10-07) |

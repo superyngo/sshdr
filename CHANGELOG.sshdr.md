@@ -15,6 +15,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 - docs: draft TUI Component Kit requirements (`docs/spec/2026-10-07-tui-component-kit.md`);
   glossary adds Component Kit; backlog records the every-Host-is-a-Machine decision (B6) and the
   unverified sync build (V1).
+- docs: ADR 0003 makes every Fleet Host a herdr Machine; glossary Fleet/Host/Group/Fleet Operation
+  rewritten; backlog B1/B5/B9 re-scoped, B6 done.
 
 ### 2026-10-06
 

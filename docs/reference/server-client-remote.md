@@ -94,7 +94,7 @@ Server 和 client 都在遠端機器上執行，本地只是一個 SSH 終端。
 
 ## 4. 對 sshdr Fleet 的意涵
 
-**Fleet** 的 **Host** 不需要安裝 herdr，因此 §3 的 bridge、snapshot、surface 協定都無法直接用在 Host 上。可以重用的是 SSH 層：
+依 [ADR 0003](../adr/0003-fleet-hosts-are-machines.md)，每台 **Host** 都是 **Machine**，因此 §3 的機制全部適用於 Fleet。下表是 ADR 之前的評估，保留作為「只用 SSH 層」的參考：
 
 | 可重用 | 位置 |
 |---|---|

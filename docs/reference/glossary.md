@@ -76,20 +76,22 @@ _Avoid_: widget library, UI framework.
 ## Fleet
 
 **Fleet**:
-The set of remote **Hosts** sshdr manages directly over SSH, without requiring herdr on them.
+The set of **Hosts** sshdr manages; every member runs herdr
+([ADR 0003](../adr/0003-fleet-hosts-are-machines.md)).
 _Avoid_: cluster, farm, inventory.
 
 **Host**:
-One member of the **Fleet**, addressed by an SSH config alias, with a detected shell type and zero
-or more **Groups**. A host may also be a **Machine**, but the two are separate records.
-_Avoid_: node, server, machine.
+A **Machine** that belongs to the **Fleet**, with zero or more **Groups**. Host and Machine are one
+record; "Host" is used when speaking of **Fleet** membership.
+_Avoid_: node, server.
 
 **Group**:
-A named label on **Hosts** used for target selection.
+A named label on **Hosts** used for **Fleet Operation** target selection.
 _Avoid_: tag, role.
 
 **Fleet Operation**:
-An action fanned out to selected **Hosts** in parallel: check, run, exec, copy, or sync.
+An action fanned out to selected **Hosts** in parallel (check, run, exec, copy, or sync), executed
+by each host's herdr **Server** through a herdr API method.
 _Avoid_: job, task, batch.
 
 ## Remote Backup
