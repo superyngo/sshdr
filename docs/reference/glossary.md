@@ -9,8 +9,8 @@ written; their behavior is specified later under [`../spec/`](../spec/README.md)
 
 **sshdr**:
 This repository: a fork of **Upstream** that adds **Fleet** management and **Remote Backup** on top
-of the herdr terminal agent runtime. The binary name is still `herdr`; renaming is an open decision
-(see [`../plan/BACKLOG.md`](../plan/BACKLOG.md)).
+of the herdr terminal agent runtime. The binary name stays `herdr` until the
+hard-fork rename ([ADR 0005](../adr/0005-sync-now-hard-fork-later.md)).
 _Avoid_: herdr fork, the fork (in docs titles).
 
 **Upstream**:

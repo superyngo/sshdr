@@ -10,6 +10,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   (SSH or Server), one SSH implementation of Fleet Operations, on-demand connections; glossary adds
   Tier and rewrites Machine/Host/Fleet/Fleet Operation; backlog re-scopes B1/B3/B5/B8/B9, adds
   B10-B12.
+- docs: ADR 0005 keeps syncing Upstream and defers the sshdr rename to a later hard-fork point;
+  backlog B3 now tracks the hard-fork criteria.
 
 ### 2026-10-07
 

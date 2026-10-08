@@ -10,3 +10,4 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 | [0002](0002-docs-layout-coexists-with-upstream.md) | sshdr docs layout coexists with Upstream-owned docs and root files | Implemented (2026-10-06) |
 | [0003](0003-fleet-hosts-are-machines.md) | Every Fleet Host is a herdr Machine; Fleet Operations run through herdr Servers | Superseded by 0004 (2026-10-08) |
 | [0004](0004-fleet-registered-machines-with-connect-time-tiers.md) | Fleet Hosts are registered Machines; Tier (SSH or Server) detected on each connection; one SSH implementation of Fleet Operations | Accepted (2026-10-08) |
+| [0005](0005-sync-now-hard-fork-later.md) | Keep syncing Upstream; rename to sshdr in one pass at a later hard-fork point | Accepted (2026-10-08) |
