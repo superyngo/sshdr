@@ -4,6 +4,13 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ## [Unreleased]
 
+### 2026-10-08
+
+- docs: ADR 0004 supersedes 0003: Fleet Hosts are registered Machines with a connect-time Tier
+  (SSH or Server), one SSH implementation of Fleet Operations, on-demand connections; glossary adds
+  Tier and rewrites Machine/Host/Fleet/Fleet Operation; backlog re-scopes B1/B3/B5/B8/B9, adds
+  B10-B12.
+
 ### 2026-10-07
 
 - docs: audit herdr TUI components and their modularity (`docs/audit/2026-10-07-tui-components.md`);

@@ -94,7 +94,7 @@ Server 和 client 都在遠端機器上執行，本地只是一個 SSH 終端。
 
 ## 4. 對 sshdr Fleet 的意涵
 
-依 [ADR 0003](../adr/0003-fleet-hosts-are-machines.md)，每台 **Host** 都是 **Machine**，因此 §3 的機制全部適用於 Fleet。下表是 ADR 之前的評估，保留作為「只用 SSH 層」的參考：
+依 [ADR 0004](../adr/0004-fleet-registered-machines-with-connect-time-tiers.md)，**Host** 一律經 `machine add` 登錄，連線時判定 **Tier**。**Server Tier** 主機適用 §3 的全部機制；**Fleet Operation** 在所有 Tier 都只走一套 SSH 實作，可以重用下表的 SSH 層：
 
 | 可重用 | 位置 |
 |---|---|

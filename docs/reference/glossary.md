@@ -42,9 +42,14 @@ A named multiplexer instance on a **Server**, holding workspaces, tabs, and pane
 _Avoid_: instance.
 
 **Machine**:
-A saved SSH target paired with a herdr **Session** running on that remote host, used by the
-**Client** to attach to a remote **Server**. Requires herdr installed remotely. Not a **Host**.
-_Avoid_: remote, server (for this concept), host.
+A saved SSH target registered with `machine add`. Its **Tier** is detected on each connection; at
+**Server Tier** it is paired with a **Session** on that host. Every Machine is a **Host**.
+_Avoid_: remote, server (for this concept).
+
+**Attention**:
+The connection status of a **Machine** that needs a human action (SSH authentication, host-key
+approval) before it can connect; shown as `! auth` or `! error`.
+_Avoid_: error state, offline.
 
 **Endpoint**:
 The identity of a connection source for a **Client**: local, or one **Machine**.
@@ -76,22 +81,29 @@ _Avoid_: widget library, UI framework.
 ## Fleet
 
 **Fleet**:
-The set of **Hosts** sshdr manages; every member runs herdr
-([ADR 0003](../adr/0003-fleet-hosts-are-machines.md)).
+The set of **Hosts** sshdr manages, all registered with `machine add`; members need only SSH
+([ADR 0004](../adr/0004-fleet-registered-machines-with-connect-time-tiers.md)).
 _Avoid_: cluster, farm, inventory.
 
 **Host**:
-A **Machine** that belongs to the **Fleet**, with zero or more **Groups**. Host and Machine are one
-record; "Host" is used when speaking of **Fleet** membership.
+A **Machine** in its role as a **Fleet** member, with zero or more **Groups**. Host and Machine are
+one record; "Host" is used when speaking of the **Fleet**.
 _Avoid_: node, server.
+
+**Tier**:
+The capability level of a **Host**, detected on each connection and never stored: **SSH Tier**
+(SSH works, no compatible **Server**; **Fleet Operations** only) or **Server Tier** (a compatible
+**Server** is reachable; adds sessions, agents, and panes). Authentication or host-key failures are
+**Attention**, not a Tier.
+_Avoid_: level, mode, grade.
 
 **Group**:
 A named label on **Hosts** used for **Fleet Operation** target selection.
 _Avoid_: tag, role.
 
 **Fleet Operation**:
-An action fanned out to selected **Hosts** in parallel (check, run, exec, copy, or sync), executed
-by each host's herdr **Server** through a herdr API method.
+An action fanned out to selected **Hosts** in parallel (check, run, exec, copy, or sync) over SSH,
+with one implementation for every **Tier**.
 _Avoid_: job, task, batch.
 
 ## Remote Backup
