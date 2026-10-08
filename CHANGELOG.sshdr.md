@@ -12,6 +12,7 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   B10-B12.
 - docs: ADR 0005 keeps syncing Upstream and defers the sshdr rename to a later hard-fork point;
   backlog B3 now tracks the hard-fork criteria.
+- docs: backlog sequences B8 (TUI/component design) before B1 and B9.
 
 ### 2026-10-07
 
