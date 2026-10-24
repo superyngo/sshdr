@@ -4,6 +4,13 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ## [Unreleased]
 
+### 2026-10-24
+
+- docs: ADR 0006 turns sshdr into a TUI Desktop built as a separate Client (`herdr desk`) whose
+  Terminal Windows are local Server panes; assessment in
+  `docs/audit/2026-10-24-desktop-env-assessment.md`; glossary rewrites sshdr and adds Desktop terms;
+  backlog defers Fleet and Remote Backup (B1, B2, B5, B9, B10), rescopes B8, adds B13-B19.
+
 ### 2026-10-08
 
 - docs: ADR 0004 supersedes 0003: Fleet Hosts are registered Machines with a connect-time Tier

@@ -13,3 +13,4 @@ never rewritten. Current behavior lives in [`../reference/`](../reference/README
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-10-24 | [TUI 桌面環境改造：綜合評估](2026-10-24-desktop-env-assessment.md) | Decided — ADR 0006 |

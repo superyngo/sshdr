@@ -2,14 +2,15 @@
 
 Canonical vocabulary for sshdr. Code identifiers, UI strings, commit messages, and every other
 document use these terms. Introducing a new term means adding its entry here in the same commit.
-Terms for the planned **Fleet** and **Remote Backup** subsystems are fixed here before any code is
-written; their behavior is specified later under [`../spec/`](../spec/README.md).
+Terms for the planned **Desktop**, **Fleet**, and **Remote Backup** subsystems are fixed here
+before any code is written; their behavior is specified later under [`../spec/`](../spec/README.md).
 
 ## Fork
 
 **sshdr**:
-This repository: a fork of **Upstream** that adds **Fleet** management and **Remote Backup** on top
-of the herdr terminal agent runtime. The binary name stays `herdr` until the
+This repository: a fork of **Upstream** that turns the herdr terminal agent runtime into a TUI
+**Desktop** ([ADR 0006](../adr/0006-tui-desktop-as-separate-client.md)); **Fleet** management and
+**Remote Backup** are deferred and planned as **Apps**. The binary name stays `herdr` until the
 hard-fork rename ([ADR 0005](../adr/0005-sync-now-hard-fork-later.md)).
 _Avoid_: herdr fork, the fork (in docs titles).
 
@@ -77,6 +78,60 @@ The planned sshdr-owned set of reusable **Client** TUI components (list, panel, 
 placement, text) that new screens are built from; requirements in
 [`../spec/2026-10-07-tui-component-kit.md`](../spec/2026-10-07-tui-component-kit.md).
 _Avoid_: widget library, UI framework.
+
+## Desktop
+
+Decided in [ADR 0006](../adr/0006-tui-desktop-as-separate-client.md).
+
+**Desktop**:
+The sshdr **Client** started with `herdr desk`: overlapping **Windows**, a **Taskbar**, a **Start
+Menu**, and desktop icons, beside the default herdr shell **Client**.
+_Avoid_: desk mode, WM, workspace (for this concept).
+
+**Window**:
+A movable, resizable rectangle on the **Desktop**; either a **Native Window** or a **Terminal
+Window**.
+_Avoid_: pane (for this concept), frame.
+
+**Native Window**:
+A **Window** drawn by the **Desktop** itself (**Machines Folder**, file manager, settings); it can
+take part in drag-and-drop and the **File Clipboard**.
+_Avoid_: built-in app.
+
+**Terminal Window**:
+A **Window** showing one pane of the local **Server** through its own terminal session stream.
+_Avoid_: shell window, console.
+
+**Taskbar**:
+The **Desktop** bar listing open **Windows** and holding the **Start Menu** button.
+_Avoid_: dock, panel.
+
+**Start Menu**:
+The **Desktop** menu that launches **Apps**, the **Machines Folder**, and settings.
+_Avoid_: launcher, app menu.
+
+**Snap**:
+Dropping a dragged **Window** on a screen edge to give it a half or the whole **Desktop**.
+_Avoid_: tiling, docking.
+
+**Machines Folder**:
+The **Native Window** listing every **Machine**, opened from its desktop icon; the entry point for
+connecting to **Machines**.
+_Avoid_: My Computer, host list.
+
+**App**:
+A program installed on the **Desktop** through a herdr plugin manifest with **Desktop** fields
+(icon, **Start Menu** entry, **File Associations**); it runs in **Terminal Windows**.
+_Avoid_: plugin (for this concept), application.
+
+**File Association**:
+A rule mapping a file extension to the command that opens it.
+_Avoid_: open-with rule, handler.
+
+**File Clipboard**:
+The **Desktop**-internal record of files cut or copied (**Machine**, paths, cut or copy), separate
+from the text clipboard.
+_Avoid_: file buffer.
 
 ## Fleet
 
