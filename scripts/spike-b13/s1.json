@@ -1,0 +1,6 @@
+{"cols":120,"rows":36,"args":["target/debug/herdr","desk"],"steps":[
+ ["sleep",1.5],["shot","start (2 panes reattached, tiled)"],
+ ["key","echo hello-desk\r"],["sleep",0.8],["shot","typed in focused"],
+ ["key","\u001cn"],["sleep",1.5],["shot","new window"],
+ ["key","\u001cq"],["wait_exit",3]
+]}

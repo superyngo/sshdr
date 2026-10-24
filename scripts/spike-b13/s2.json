@@ -1,0 +1,10 @@
+{"cols":120,"rows":36,"args":["target/debug/herdr","desk"],"steps":[
+ ["sleep",1.5],["shot","reattach 3 panes"],
+ ["drag",10,17,0,20],["sleep",0.8],["shot","w3 dragged to left edge -> left half"],
+ ["mouse",0,80,5,false],["mouse",0,80,5,true],["sleep",0.5],
+ ["drag",90,16,90,30],["sleep",1],["shot","w2 raised, bottom edge resized"],
+ ["key","clear; tput cols; tput lines\r"],["sleep",1],["shot","w2 size after resize"],
+ ["mouse",0,114,0,false],["mouse",0,114,0,true],["sleep",1],
+ ["key","clear; tput cols; tput lines\r"],["sleep",1],["shot","w2 maximized"],
+ ["key","\u001cq"],["wait_exit",3]
+]}

@@ -1,0 +1,7 @@
+{"cols":120,"rows":36,"args":["target/debug/herdr","desk"],"steps":[
+ ["sleep",1.5],
+ ["key","exit\r"],["sleep",1.5],["shot","w3 exited -> window gone"],
+ ["mouse",0,116,0,false],["mouse",0,116,0,true],["sleep",1.5],["shot","w2 [x] -> closed"],
+ ["resize",90,24],["sleep",1],["shot","host resized 90x24"],
+ ["key","\u001cq"],["wait_exit",3]
+]}

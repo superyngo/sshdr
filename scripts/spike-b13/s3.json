@@ -1,0 +1,11 @@
+{"cols":120,"rows":36,"args":["target/debug/herdr","desk"],"steps":[
+ ["sleep",1.5],
+ ["key","clear; printf '\\033[?1000h\\033[?1006h'; cat -v\r"],["sleep",1],
+ ["mouse",0,10,20,false],["mouse",0,10,20,true],["sleep",0.3],
+ ["mouse",2,1,18,false],["mouse",2,1,18,true],["sleep",0.8],
+ ["shot","w3 mouse reports: expect <0;10;3 and <2;1;1"],
+ ["key","\u0003"],["sleep",0.3],["key","printf '\\033[?1000l\\033[?1006l'; clear; seq 1 200\r"],["sleep",1],
+ ["mouse",64,20,25,false],["mouse",64,20,25,false],["mouse",64,20,25,false],["sleep",1],
+ ["shot","wheel up x3 over w3 shell -> scrollback"],
+ ["key","\u001cq"],["wait_exit",3]
+]}
