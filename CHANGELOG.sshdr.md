@@ -10,6 +10,7 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   Terminal Windows are local Server panes; assessment in
   `docs/audit/2026-10-24-desktop-env-assessment.md`; glossary rewrites sshdr and adds Desktop terms;
   backlog defers Fleet and Remote Backup (B1, B2, B5, B9, B10), rescopes B8, adds B13-B19.
+- docs: B13 desk spike plan (`docs/plan/2026-10-24-b13-desk-spike.md`).
 
 ### 2026-10-08
 
