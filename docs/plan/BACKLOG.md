@@ -14,8 +14,7 @@ deleted. Evidence cites files and symbols, not line numbers.
 | B8 | Rescoped by ADR 0006 (2026-10-24): design the **Desktop**'s own component set (hit map, menu, window/**Snap** geometry, list, dialog), lifted from `~/repos/wens-tui-lab` (`desk.rs`, `hitmap.rs`, `menu.rs`, `geom.rs`). The shell-overlay hook-point constraint (spec R10) no longer applies because the **Desktop** is a separate **Client** | `docs/spec/2026-10-07-tui-component-kit.md` (Draft); `docs/audit/2026-10-24-desktop-env-assessment.md`; ADR 0006 | 2026-10-24 | P1 | M | Component spec for the **Desktop** approved |
 | B11 | `machine add` saves an **SSH Tier** profile when herdr is absent or installation is declined, instead of discarding it. Needed by the **Machines Folder** (B15) | `src/cli/machine.rs`; ADR 0004 | 2026-10-24 | P1 | S | **SSH Tier** profile persisted and listed |
 | B12 | Classify connection failures into **Attention** (auth, host key) vs **SSH Tier** (no compatible **Server**); **SSH Tier** hosts connect on demand without heartbeat. Needed by the **Machines Folder** (B15) | `src/remote/saved.rs` `saved_ssh_failure_needs_attention`; `src/client/endpoint/supervisor.rs`; ADR 0004 | 2026-10-24 | P1 | M | Tier shown per **Machine** |
-| B13 | P0 spike: 2–3 local panes shown as **Terminal Windows** through `terminal session control` streams with client-side ANSI parsing; drag and resize; keyboard and mouse forwarding; detach and reattach; macOS, Linux, Windows | `src/client/terminal_sessions.rs`; `ClientMessage::ControlTerminal`; `crates/ghostty-vt`; ADR 0006; plan `docs/plan/2026-10-24-b13-desk-spike.md` | 2026-10-24 | P1 | M | Pty-driven run of the real binary passes; render cost with 1 vs 15 **Windows** reported; Windows go/no-go recorded |
-| B14 | P1 **Desktop** shell: `herdr desk`, **Windows**, **Taskbar**, **Start Menu**, **Snap**, persisted **Window** geometry | `~/repos/wens-tui-lab/src/desk.rs`, `desk_input.rs`; ADR 0006 | 2026-10-24 | P1 | M | Buffer and hit-map tests; pty-driven run; depends on B13 |
+| B14 | P1 **Desktop** shell: `herdr desk`, **Windows**, **Taskbar**, **Start Menu**, **Snap**, persisted **Window** geometry. Carry over from B13: attach only panes the **Desktop** created (herdr-sidebar adds a `Sidebar` pane to every new workspace); move the Windows VT-input code into `src/platform/`; keyboard-protocol events on the control stream if kitty keyboard is needed; Ctrl+\ prefix becomes a fallback | Branch `spike/b13-desk` (`src/cli/desk/`, `src/pane/desk_mirror.rs`); `docs/audit/2026-10-24-b13-desk-spike.md`; ADR 0006 | 2026-10-24 | P1 | M | Buffer and hit-map tests; pty-driven run; Windows run on ezpad |
 | B15 | P2 **Machines Folder**: desktop icon, list/icon view, Tier status, double-click connects (nested herdr **Client** at **Server Tier**, `ssh` at **SSH Tier**) | `src/client/endpoint/catalog.rs` `EndpointCatalog`; ADR 0004, 0006 | 2026-10-24 | P1 | S–M | Connects to a real **Machine** at each Tier; depends on B14 |
 | B16 | P3 local file manager: multi-select, drag-and-drop, cut/copy/paste, **File Clipboard**, text clipboard, **File Associations** | `selection.rs`; `platform::read_clipboard_text`; herdr-sidebar `actions.rs` (single editor command only) | 2026-10-24 | P1 | L | Unit and pty-driven tests; depends on B14 |
 | B17 | P4 remote file manager: SSH file layer over the managed OpenSSH config (a subset of sshi `cp`), copy between **Machines**, progress, conflicts, cancel; Windows hosts | `src/remote/attach.rs` `RemoteSsh`, `write_managed_ssh_config`; `~/repos/sshi`; ADR 0004, 0006 | 2026-10-24 | P1 | L | Verified against real remote **Machines**; depends on B16 |
@@ -26,7 +25,7 @@ deleted. Evidence cites files and symbols, not line numbers.
 
 | ID | Item | How to verify |
 |---|---|---|
-| V1 | Upstream sync to `a124eed7` merged into `main` without conflicts; build not verified because Zig 0.16.0 is not installed on this workstation (`crates/ghostty-vt/build.rs` panics) | Install Zig 0.16.0, then `just check` on `main` |
+| V2 | `herdr desk` on Windows: the `#[cfg(windows)]` VT-input path has never compiled or run (B13 skipped Windows) | `just setup-windows-cross` (owner accepts the Microsoft SDK license), `just windows-lint`, then run on ezpad |
 
 ## Awaiting external
 
@@ -48,4 +47,6 @@ Deferred by ADR 0006 (2026-10-24); resume when **Fleet** and **Remote Backup** r
 
 | ID | Item | Commit |
 |---|---|---|
+| B13 | P0 spike: **Terminal Windows** over `terminal session control` streams; interaction, reattach, and 1 vs 15 window cost verified on macOS; Windows skipped (V2) | docs: record b13 desk spike results |
+| V1 | Upstream sync `a124eed7` verified: `just check` on `main` passes except `windows-lint` (no SDK); maintenance tests need Python 3.11+ (`just --set python`) | docs: record b13 desk spike results |
 | B6 | Machine/Host relation: every **Host** is a **Machine** (ADR 0003, superseded by ADR 0004) | docs: record adr 0003, fleet hosts are machines |

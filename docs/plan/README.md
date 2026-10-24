@@ -7,11 +7,10 @@ The living backlog is [BACKLOG.md](BACKLOG.md) — undated, never frozen while w
 
 ## In progress
 
-| Date | Document | Status |
-|---|---|---|
-| 2026-10-24 | [B13 桌面技術驗證計畫](2026-10-24-b13-desk-spike.md) | Draft — 等待核准 |
+None.
 
 ## Landed
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-10-24 | [B13 桌面技術驗證計畫](2026-10-24-b13-desk-spike.md) | Landed |

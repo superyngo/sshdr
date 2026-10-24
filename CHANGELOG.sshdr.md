@@ -11,6 +11,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   `docs/audit/2026-10-24-desktop-env-assessment.md`; glossary rewrites sshdr and adds Desktop terms;
   backlog defers Fleet and Remote Backup (B1, B2, B5, B9, B10), rescopes B8, adds B13-B19.
 - docs: B13 desk spike plan (`docs/plan/2026-10-24-b13-desk-spike.md`).
+- docs: B13 desk spike results (`docs/audit/2026-10-24-b13-desk-spike.md`): terminal windows over
+  session streams work on macOS (code on branch `spike/b13-desk`); backlog closes B13 and V1, adds V2
+  (Windows run), and carries spike findings into B14.
 
 ### 2026-10-08
 
