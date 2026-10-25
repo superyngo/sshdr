@@ -16,6 +16,8 @@ deleted. Evidence cites files and symbols, not line numbers.
 | B17 | P4 remote file manager: SSH file layer over the managed OpenSSH config (a subset of sshi `cp`), copy between **Machines**, progress, conflicts, cancel; Windows hosts | `src/remote/attach.rs` `RemoteSsh`, `write_managed_ssh_config`; `~/repos/sshi`; ADR 0004, 0006 | 2026-10-24 | P1 | L | Verified against real remote **Machines**; depends on B16 |
 | B18 | P5 **App** model: herdr plugin manifest plus **Desktop** fields (icon, **Start Menu** entry, **File Associations**, window placement) | `src/api/schema/plugins.rs`; `src/app/api/plugins/`; ADR 0006 | 2026-10-24 | P2 | M | Sample **App** installs and launches from the **Start Menu**; depends on B14 |
 | B19 | Touch layout for the **Desktop** (tap = press + release; no drag, right-click, or long-press) | `~/repos/wens-tui-lab/src/mobile.rs`; tui-components contract C12; ADR 0006 | 2026-10-24 | P3 | L | Spec approved; after the first release |
+| B24 | Drop the `▣ Machines` desktop icon; the **Machines Folder** stays in the **Start Menu** | `src/cli/desk/app.rs` `Hit::Icon`; `folder::render_icon` | 2026-10-25 | P2 | S | No icon on the desk; Start → Machines still opens the folder |
+| B25 | Re-map the **Desktop** to herdr's hierarchy: **Window** = workspace with a tab strip, **Task** = **Machine** (named by its label, not renamable); amends ADR 0007 | `src/cli/desk/app.rs`, `state.rs`, `taskbar.rs`; plan `2026-10-25-b24-b25-desk-hierarchy.md` | 2026-10-25 | P1 | L | One **Taskbar** button per **Machine**; each window is a workspace whose tabs switch inside it |
 
 ## Pending verification
 
