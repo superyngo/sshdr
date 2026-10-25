@@ -6,6 +6,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- docs: record the desk files design: spec `2026-10-25-desk-files.md` (ribbon, list and grid,
+  sort, status bar, view state in `desk.json`, Terminal Window interplay), ADR 0009 (Files is one
+  App with one Task; closes B27).
 - docs: record disabled actions in the fork (B4): GitHub Actions turned off for
   `superyngo/sshdr`; workflow files unchanged; `gh` defaults to the fork.
 - feat: desk drags pane dividers to resize splits (B28): `layout.set_split_ratio`, sent every

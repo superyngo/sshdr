@@ -111,8 +111,9 @@ The **Desktop** bar listing **Tasks** and holding the **Start Menu** button.
 _Avoid_: dock, panel.
 
 **Task**:
-A **Machine** (or Local) shown on the **Desktop** as one **Taskbar** button grouping its
-**Terminal Windows**; named after the **Machine**, never renamed on the **Desktop**.
+One **Taskbar** button grouping the **Windows** of one **App**: a **Machine** (or Local) for its
+**Terminal Windows**, named after the **Machine** and never renamed on the **Desktop**; **Files**
+for every **Files** window (ADR 0009).
 _Avoid_: group, session, workspace (for this concept).
 
 **Minimize**:
@@ -131,6 +132,11 @@ _Avoid_: tiling, docking.
 The **Native Window** listing every **Machine**, opened from the **Start Menu**; the entry point
 for connecting to **Machines**; opening a **Server Tier** **Machine** shows its windows.
 _Avoid_: My Computer, host list.
+
+**Files**:
+The **Desktop**'s file manager **App**: **Native Windows** browsing the `Machines` root or a
+folder on a **Machine**; all of them share one **Task** (ADR 0009).
+_Avoid_: Explorer, Finder, file browser.
 
 **App**:
 A program installed on the **Desktop** through a herdr plugin manifest with **Desktop** fields
