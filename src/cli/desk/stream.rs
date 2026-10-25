@@ -2,12 +2,13 @@
 //! driving the window's pane. Only public CLI surfaces are used.
 
 use std::io::{self, BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc::Sender;
 
 use base64::Engine;
 use serde_json::{json, Value};
 
+use super::transport::{self, Target};
 use super::wm::WinId;
 
 pub(super) enum DeskEvent {
@@ -18,13 +19,23 @@ pub(super) enum DeskEvent {
         height: u16,
         bytes: Vec<u8>,
     },
-    Closed(WinId),
-    /// Periodic server state (`server::poll`).
-    Snapshot(super::server::Snapshot),
+    /// The stream with this serial ended (pane exited, link lost, or released).
+    Closed(WinId, u64),
+    /// Periodic state of the **Target** with this key (`server::spawn_poller`).
+    Snapshot(String, super::server::Snapshot),
+    /// A poll of that **Target** failed.
+    Link(String, super::transport::Link),
+    /// Result of connecting to a **Machine** (`server::connect`): a snapshot, or the failure.
+    Connected(
+        String,
+        Result<super::server::Snapshot, super::transport::Link>,
+    ),
 }
 
 /// One `terminal session control` child streaming one pane.
 pub(super) struct Session {
+    /// Tells this stream's `Closed` apart from an earlier stream of the same window.
+    pub serial: u64,
     child: Child,
     stdin: Option<ChildStdin>,
 }
@@ -32,24 +43,26 @@ pub(super) struct Session {
 impl Session {
     pub fn spawn(
         win: WinId,
+        target: &Target,
+        master: usize,
         terminal_id: &str,
         cols: u16,
         rows: u16,
         events: Sender<DeskEvent>,
     ) -> io::Result<Self> {
-        let exe = std::env::current_exe()?;
-        let mut child = Command::new(exe)
-            .args([
-                "terminal",
-                "session",
-                "control",
-                terminal_id,
-                "--takeover",
-                "--cols",
-                &cols.max(1).to_string(),
-                "--rows",
-                &rows.max(1).to_string(),
-            ])
+        let (cols, rows) = (cols.max(1).to_string(), rows.max(1).to_string());
+        let args = [
+            "terminal",
+            "session",
+            "control",
+            terminal_id,
+            "--takeover",
+            "--cols",
+            &cols,
+            "--rows",
+            &rows,
+        ];
+        let mut child = transport::herdr(target, &args, master)?
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -59,8 +72,14 @@ impl Session {
             .stdout
             .take()
             .ok_or_else(|| io::Error::other("session control: no stdout"))?;
-        std::thread::spawn(move || read_frames(win, stdout, events));
-        Ok(Self { child, stdin })
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        let serial = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        std::thread::spawn(move || read_frames(win, serial, stdout, events));
+        Ok(Self {
+            serial,
+            child,
+            stdin,
+        })
     }
 
     fn send(&mut self, command: Value) {
@@ -122,7 +141,12 @@ impl Session {
     }
 }
 
-fn read_frames(win: WinId, stdout: std::process::ChildStdout, events: Sender<DeskEvent>) {
+fn read_frames(
+    win: WinId,
+    serial: u64,
+    stdout: std::process::ChildStdout,
+    events: Sender<DeskEvent>,
+) {
     for line in BufReader::new(stdout).lines() {
         let Ok(line) = line else {
             break;
@@ -158,5 +182,5 @@ fn read_frames(win: WinId, stdout: std::process::ChildStdout, events: Sender<Des
             _ => {}
         }
     }
-    let _ = events.send(DeskEvent::Closed(win));
+    let _ = events.send(DeskEvent::Closed(win, serial));
 }

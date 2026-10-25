@@ -9,6 +9,7 @@ mod server;
 mod state;
 mod stream;
 mod taskbar;
+mod transport;
 mod wm;
 
 const USAGE: &str = "usage: herdr desk\n\n\

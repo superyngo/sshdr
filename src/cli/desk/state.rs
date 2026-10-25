@@ -48,6 +48,41 @@ pub(super) struct SavedWindow {
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct DeskState {
     pub windows: Vec<SavedWindow>,
+    /// **Machines** (profile ids) connected when the desk last exited; reconnected on start.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub machines: Vec<String>,
+}
+
+/// Key of a window in `desk.json`: the terminal id for local windows (the B14 format), and
+/// `<profile id>/<terminal id>` for a **Machine**'s.
+pub(super) fn key(target: &str, terminal_id: &str) -> String {
+    if target == super::transport::LOCAL_KEY {
+        terminal_id.to_string()
+    } else {
+        format!("{target}/{terminal_id}")
+    }
+}
+
+/// The **Machine** a key belongs to; `None` for local windows.
+pub(super) fn key_machine(key: &str) -> Option<&str> {
+    key.split_once('/').map(|(machine, _)| machine)
+}
+
+/// Apply one saved entry to a window that opened after startup.
+pub(super) fn apply_saved(w: &mut super::wm::Window, saved: &SavedWindow, area: Rect) {
+    w.minimized = saved.minimized;
+    match saved.restore {
+        Some(restore) => {
+            w.state = WinState::Maximized {
+                restore: super::wm::fit(restore.into(), area),
+            };
+            w.rect = area;
+        }
+        None => {
+            w.state = WinState::Normal;
+            w.rect = super::wm::fit(saved.rect.into(), area);
+        }
+    }
 }
 
 pub(super) fn path() -> PathBuf {
@@ -89,6 +124,7 @@ pub(super) fn capture(desk: &Desk, terminal: impl Fn(WinId) -> Option<String>) -
                 })
             })
             .collect(),
+        machines: Vec::new(),
     }
 }
 
@@ -104,21 +140,8 @@ pub(super) fn restore(
         terminal(id).and_then(|t| state.windows.iter().position(|s| s.terminal_id == t))
     };
     for w in &mut desk.windows {
-        let Some(saved) = rank(w.id).map(|i| &state.windows[i]) else {
-            continue;
-        };
-        w.minimized = saved.minimized;
-        match saved.restore {
-            Some(restore) => {
-                w.state = WinState::Maximized {
-                    restore: super::wm::fit(restore.into(), area),
-                };
-                w.rect = area;
-            }
-            None => {
-                w.state = WinState::Normal;
-                w.rect = super::wm::fit(saved.rect.into(), area);
-            }
+        if let Some(saved) = rank(w.id).map(|i| &state.windows[i]) {
+            apply_saved(w, saved, area);
         }
     }
     desk.windows
@@ -187,6 +210,7 @@ mod tests {
                 restore: None,
                 minimized: false,
             }],
+            machines: Vec::new(),
         };
         restore(&mut d, &state, term, AREA);
         assert_eq!(d.windows[1].id, 2);
@@ -200,5 +224,15 @@ mod tests {
         assert_eq!(load(&file), DeskState::default());
         save(&file, &state);
         assert_eq!(load(&file), state);
+    }
+
+    #[test]
+    fn local_keys_keep_the_b14_format_and_machine_keys_carry_the_profile() {
+        assert_eq!(key("local", "t1"), "t1");
+        assert_eq!(key("abc", "t1"), "abc/t1");
+        assert_eq!(key_machine("abc/t1"), Some("abc"));
+        assert_eq!(key_machine("t1"), None);
+        let old: DeskState = serde_json::from_str(r#"{"windows":[]}"#).unwrap();
+        assert!(old.machines.is_empty());
     }
 }
