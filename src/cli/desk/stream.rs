@@ -21,11 +21,11 @@ pub(super) enum DeskEvent {
     },
     /// The stream with this serial ended (pane exited, link lost, or released).
     Closed(WinId, u64),
-    /// Periodic state of the **Target** with this key (`server::spawn_poller`).
+    /// Fresh state of the **Target** with this key (`server::spawn_watcher`).
     Snapshot(String, super::server::Snapshot),
-    /// A poll of that **Target** failed.
+    /// That **Target**'s link failed or stalled.
     Link(String, super::transport::Link),
-    /// Result of connecting to a **Machine** (`server::connect`): a snapshot, or the failure.
+    /// Result of connecting to a **Machine** (`server::spawn_watcher`): a snapshot, or the failure.
     Connected(
         String,
         Result<super::server::Snapshot, super::transport::Link>,

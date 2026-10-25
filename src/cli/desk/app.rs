@@ -20,7 +20,7 @@ use ratatui::{
 use super::dialog::{Dialog, DialogButton, Outcome};
 use super::folder::{self, Folder};
 use super::menu::{Menu, MenuHit, MenuItem};
-use super::server::{self, Snapshot, TaskInfo, WindowInfo};
+use super::server::{self, Snapshot, TaskInfo, Wake, WindowInfo};
 use super::state;
 use super::stream::{DeskEvent, Session};
 use super::taskbar;
@@ -145,8 +145,35 @@ struct Task {
 struct TargetState {
     target: Target,
     link: Link,
-    /// Set while connected; stops the poller.
-    poller: Option<Arc<AtomicBool>>,
+    /// Set while connecting or connected; stops the watcher.
+    watcher: Option<Watcher>,
+    /// The first snapshot arrived (**Server Tier**).
+    connected: bool,
+}
+
+/// Handle of a `server::spawn_watcher` thread.
+struct Watcher {
+    stop: Arc<AtomicBool>,
+    wake: Sender<Wake>,
+}
+
+impl Watcher {
+    fn spawn(target: Target, report_connect: bool, events: Sender<DeskEvent>) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (wake, rx) = mpsc::channel();
+        server::spawn_watcher(
+            target,
+            report_connect,
+            stop.clone(),
+            (wake.clone(), rx),
+            events,
+        );
+        Self { stop, wake }
+    }
+
+    fn stop(&self) {
+        self.stop.store(true, Ordering::Relaxed);
+    }
 }
 
 struct App {
@@ -395,8 +422,14 @@ impl App {
     /// Reconcile one **Target**'s windows with its server state: new tabs open, closed tabs go,
     /// labels follow, windows whose stream ended reattach in place.
     fn apply(&mut self, key: &str, snap: Snapshot) {
-        if let Some(state) = self.target_state(key) {
-            state.link = Link::Server;
+        match self.target_state(key) {
+            // A late snapshot from a stopped watcher.
+            Some(state) if state.watcher.is_none() && key != LOCAL_KEY => return,
+            Some(state) => {
+                state.link = Link::Server;
+                state.connected = true;
+            }
+            None => return,
         }
         self.tasks.retain(|t| t.target != key);
         self.tasks.extend(snap.tasks.into_iter().map(|info| Task {
@@ -427,7 +460,7 @@ impl App {
             }
         }
         // A snapshot taken before a window was created must not drop it.
-        let grace = server::POLL_INTERVAL * 2;
+        let grace = server::CREATE_GRACE;
         let gone: Vec<WinId> = self
             .data
             .iter()
@@ -466,49 +499,40 @@ impl App {
             .map_or(Link::NotConnected, |t| t.link)
     }
 
-    /// Start polling a **Target** whose first snapshot arrived.
-    fn start_poller(&mut self, key: &str) {
-        let events = self.events.clone();
-        let Some(state) = self.target_state(key) else {
-            return;
-        };
-        if state.poller.is_some() {
-            return;
-        }
-        let stop = Arc::new(AtomicBool::new(false));
-        state.poller = Some(stop.clone());
-        server::spawn_poller(state.target.clone(), stop, events);
-    }
-
-    /// Connect to a **Machine** in the background (**Tier** detection, ADR 0004); the result
-    /// arrives as [`DeskEvent::Connected`].
+    /// Follow a **Target**: the local **Server** from start, a **Machine** once connected.
+    /// For a **Machine** the first result arrives as [`DeskEvent::Connected`] (**Tier**
+    /// detection, ADR 0004).
     fn connect(&mut self, key: &str) {
         let events = self.events.clone();
         let Some(state) = self.target_state(key) else {
             return;
         };
-        if state.poller.is_some() || state.link == Link::Connecting {
+        if state.watcher.is_some() {
             return;
         }
-        state.link = Link::Connecting;
-        let target = state.target.clone();
-        let key = key.to_string();
-        std::thread::spawn(move || {
-            let result = server::connect(&target).map_err(|err| {
-                tracing::warn!(err = %err.message, "desk: connect failed");
-                err.link
-            });
-            let _ = events.send(DeskEvent::Connected(key, result));
-        });
+        let report_connect = key != LOCAL_KEY;
+        if report_connect {
+            state.link = Link::Connecting;
+        }
+        state.watcher = Some(Watcher::spawn(state.target.clone(), report_connect, events));
+    }
+
+    /// Ask a **Target**'s watcher for a fresh snapshot (a window stream ended).
+    fn refresh(&mut self, key: &str) {
+        if let Some(watcher) = self.target_state(key).and_then(|s| s.watcher.as_ref()) {
+            let _ = watcher.wake.send(Wake::Refresh);
+        }
     }
 
     fn connected(&mut self, key: &str, result: Result<Snapshot, Link>) {
         match result {
             Ok(snap) => {
                 self.apply(key, snap);
-                self.start_poller(key);
             }
             Err(link) => {
+                if let Some(state) = self.target_state(key) {
+                    state.watcher = None;
+                }
                 self.set_link(key, link);
                 let by_hand = self.ssh_on_tier.iter().any(|k| k == key);
                 self.ssh_on_tier.retain(|k| k != key);
@@ -559,7 +583,7 @@ impl App {
                     Target::Local => ("this computer".to_string(), "Local".to_string()),
                     Target::Machine(m) => (m.target.clone(), t.link.text().to_string()),
                 };
-                let status = if t.poller.is_some() && windows > 0 {
+                let status = if t.connected && windows > 0 {
                     format!("{status} · {windows}")
                 } else {
                     status
@@ -593,7 +617,7 @@ impl App {
         let Some(state) = self.targets.iter().find(|t| t.target.key() == key) else {
             return;
         };
-        match (state.link, state.poller.is_some()) {
+        match (state.link, state.connected) {
             (Link::Ssh, false) => self.open_ssh(key),
             (Link::Connecting, _) => {}
             (_, true) => {
@@ -620,7 +644,7 @@ impl App {
         let state = self.targets.get(index)?;
         let key = state.target.key().to_string();
         let mut items = Vec::new();
-        match (&state.target, state.poller.is_some()) {
+        match (&state.target, state.connected) {
             (Target::Local, _) => {
                 items.push(MenuItem::new("Show windows", "", Action::OpenMachine(key)))
             }
@@ -667,9 +691,10 @@ impl App {
         let Some(state) = self.target_state(key) else {
             return;
         };
-        if let Some(stop) = state.poller.take() {
-            stop.store(true, Ordering::Relaxed);
+        if let Some(watcher) = state.watcher.take() {
+            watcher.stop();
         }
+        state.connected = false;
         state.link = Link::NotConnected;
         let ids: Vec<WinId> = self
             .data
@@ -702,7 +727,7 @@ impl App {
         let connected: Vec<&str> = self
             .targets
             .iter()
-            .filter(|t| t.poller.is_some())
+            .filter(|t| t.connected)
             .map(|t| t.target.key())
             .collect();
         let kept: Vec<state::SavedWindow> = self
@@ -818,6 +843,9 @@ impl App {
                 if let Some(session) = ended {
                     session.release();
                     self.refresh_title(win);
+                    if let Some(key) = self.data.get(&win).map(|d| d.target.clone()) {
+                        self.refresh(&key);
+                    }
                 }
             }
             DeskEvent::Snapshot(key, snap) => self.apply(&key, snap),
@@ -1384,7 +1412,7 @@ impl App {
     fn link_summary(&self) -> String {
         self.targets
             .iter()
-            .filter(|t| t.poller.is_some() && matches!(t.link, Link::Offline | Link::Auth))
+            .filter(|t| t.connected && matches!(t.link, Link::Offline | Link::Auth))
             .map(|t| format!("{} {} · ", t.target.label(), t.link.text()))
             .collect()
     }
@@ -1618,12 +1646,14 @@ pub(super) fn run() -> io::Result<i32> {
     let mut targets = vec![TargetState {
         target: Target::Local,
         link: Link::Server,
-        poller: None,
+        watcher: None,
+        connected: true,
     }];
     targets.extend(transport::machines().into_iter().map(|m| TargetState {
         target: Target::Machine(m),
         link: Link::NotConnected,
-        poller: None,
+        watcher: None,
+        connected: false,
     }));
     let mut app = App {
         tasks: Vec::new(),
@@ -1664,7 +1694,7 @@ pub(super) fn run() -> io::Result<i32> {
     if app.desk.windows.is_empty() {
         app.new_window();
     }
-    app.start_poller(LOCAL_KEY);
+    app.connect(LOCAL_KEY);
     for machine in &saved.machines {
         app.connect(machine);
     }

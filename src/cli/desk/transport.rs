@@ -3,8 +3,8 @@
 //! (`platform::shared_ssh_control_path`) and run with `BatchMode=yes`, so a **Machine** that
 //! needs a human never prompts inside the desk (B22 results §4).
 
-use std::io;
-use std::process::{Command, Output, Stdio};
+use std::io::{self, BufRead, BufReader, Write};
+use std::process::{Child, ChildStdin, Command, Output, Stdio};
 use std::time::{Duration, Instant};
 
 /// Streams per ControlMaster. sshd's default `MaxSessions` is 10; the rest is left for polls
@@ -152,14 +152,30 @@ fn ssh(target: &str, master: usize, control_master: &str) -> io::Result<Command>
 }
 
 /// Run `command` to completion; kill it after `timeout`.
-pub(super) fn output_within(mut command: Command, timeout: Duration) -> io::Result<Output> {
+pub(super) fn output_within(command: Command, timeout: Duration) -> io::Result<Output> {
+    exchange(command, None, timeout)
+}
+
+/// Like [`output_within`], writing `input` to stdin first; stdin then closes.
+pub(super) fn exchange(
+    mut command: Command,
+    input: Option<&[u8]>,
+    timeout: Duration,
+) -> io::Result<Output> {
     let mut child = command
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
     let out = drain(child.stdout.take());
     let err = drain(child.stderr.take());
+    if let (Some(input), Some(mut stdin)) = (input, child.stdin.take()) {
+        let _ = stdin.write_all(input);
+    }
     let deadline = Instant::now() + timeout;
     let status = loop {
         if let Some(status) = child.try_wait()? {
@@ -177,6 +193,71 @@ pub(super) fn output_within(mut command: Command, timeout: Duration) -> io::Resu
         stdout: out.join().unwrap_or_default(),
         stderr: err.join().unwrap_or_default(),
     })
+}
+
+/// `ssh -W <socket>`: stdio joined to the **Machine**'s API socket over ControlMaster 0, so
+/// API requests reach the remote **Server** without starting a remote `herdr` process.
+pub(super) fn socket_command(machine: &Machine, socket: &str) -> io::Result<Command> {
+    let mut command = ssh(&machine.target, 0, "auto")?;
+    command.arg("-W").arg(socket).arg(&machine.target);
+    Ok(command)
+}
+
+/// A long-lived API connection (`events.subscribe`): lines from the **Server**, and the ssh
+/// child for a **Machine** (killed on drop; a local stream ends with the **Server**). The
+/// reader takes `lines`; dropping the stream ends a remote reader.
+pub(super) struct ApiStream {
+    pub lines: Option<Box<dyn BufRead + Send>>,
+    child: Option<Child>,
+    /// Kept open: closing stdin would end the remote stream.
+    _stdin: Option<ChildStdin>,
+}
+
+impl ApiStream {
+    /// Open `socket` on `target` and send `request` (one JSON line).
+    pub(super) fn open(target: &Target, socket: &str, request: &[u8]) -> io::Result<Self> {
+        match target {
+            Target::Local => {
+                let mut stream = crate::ipc::connect_local_stream(std::path::Path::new(socket))?;
+                stream.write_all(request)?;
+                Ok(Self {
+                    lines: Some(Box::new(BufReader::new(stream))),
+                    child: None,
+                    _stdin: None,
+                })
+            }
+            Target::Machine(machine) => {
+                let mut child = socket_command(machine, socket)?
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .stderr(Stdio::null())
+                    .spawn()?;
+                let mut stdin = child.stdin.take();
+                let stdout = child.stdout.take();
+                let (Some(input), Some(stdout)) = (stdin.as_mut(), stdout) else {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(io::Error::other("ssh stream without pipes"));
+                };
+                input.write_all(request)?;
+                input.flush()?;
+                Ok(Self {
+                    lines: Some(Box::new(BufReader::new(stdout))),
+                    child: Some(child),
+                    _stdin: stdin,
+                })
+            }
+        }
+    }
+}
+
+impl Drop for ApiStream {
+    fn drop(&mut self) {
+        if let Some(child) = self.child.as_mut() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 fn drain<R: io::Read + Send + 'static>(pipe: Option<R>) -> std::thread::JoinHandle<Vec<u8>> {

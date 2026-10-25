@@ -1,19 +1,34 @@
 //! Server state for the desk (ADR 0007): every workspace is a **Task** and every tab a
-//! **Terminal Window** showing the tab's root pane. Uses public CLI commands only.
+//! **Terminal Window** showing the tab's root pane. Reads state over the public API socket
+//! (`session.snapshot`, `events.subscribe`); changes it with public CLI commands.
 
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::stream::DeskEvent;
-use super::transport::{self, Link, Target};
+use crate::api::client::{ApiClient, ConnectionTarget};
+use crate::api::schema::events::{EventsSubscribeParams, Subscription};
+use crate::api::schema::server::PingParams;
+use crate::api::schema::{common::EmptyParams, Method, Request};
 
-pub(super) const POLL_INTERVAL: Duration = Duration::from_secs(1);
-/// One CLI call longer than this marks the **Target** offline (B22 results §4.5).
+use super::stream::DeskEvent;
+use super::transport::{self, ApiStream, Link, Target};
+
+/// A window created this recently survives a snapshot taken before it existed.
+pub(super) const CREATE_GRACE: Duration = Duration::from_secs(2);
+/// Events arriving within this time share one snapshot.
+const COALESCE: Duration = Duration::from_millis(100);
+/// Wait before a failed **Target** is tried again.
+const RETRY: Duration = Duration::from_secs(2);
+/// A **Machine** silent this long is pinged; a ping longer than [`PING_TIMEOUT`] means
+/// offline, so a stall shows within about 7 s.
+const PING_EVERY: Duration = Duration::from_secs(3);
+const PING_TIMEOUT: Duration = Duration::from_secs(3);
+/// One call longer than this marks the **Target** offline (B22 results §4.5).
 pub(super) const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 /// The first call to a **Machine** may open its ControlMaster (`ConnectTimeout=10`).
 pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
@@ -79,33 +94,109 @@ fn herdr_json(target: &Target, args: &[&str]) -> io::Result<Value> {
     Ok(call(target, args, CALL_TIMEOUT)?)
 }
 
-fn list(value: &Value, key: &str) -> Vec<Value> {
-    value
-        .get("result")
-        .unwrap_or(value)
-        .get(key)
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
 fn text(value: &Value, key: &str) -> Option<String> {
     value.get(key)?.as_str().map(str::to_string)
 }
 
-pub(super) fn snapshot(target: &Target, timeout: Duration) -> Result<Snapshot, CallError> {
-    let workspaces = list(
-        &call(target, &["workspace", "list"], timeout)?,
-        "workspaces",
-    );
-    let tabs = list(&call(target, &["tab", "list"], CALL_TIMEOUT)?, "tabs");
-    let panes = list(&call(target, &["pane", "list"], CALL_TIMEOUT)?, "panes");
-    Ok(build_snapshot(&workspaces, &tabs, &panes))
+/// Path of the API socket of `target`. A **Machine** reports it (`status server --json`); a
+/// stopped remote **Server** counts as **SSH Tier**, like a missing `herdr`.
+fn socket_path(target: &Target, timeout: Duration) -> Result<String, CallError> {
+    if let Target::Local = target {
+        return Ok(ApiClient::local().socket_path().display().to_string());
+    }
+    let status = call(target, &["status", "server", "--json"], timeout)?;
+    match (
+        status.get("running").and_then(Value::as_bool),
+        text(&status, "socket"),
+    ) {
+        (Some(true), Some(socket)) => Ok(socket),
+        _ => Err(CallError {
+            link: Link::Ssh,
+            message: "remote herdr server is not running".into(),
+        }),
+    }
 }
 
-/// **Tier** detection for a **Machine** (ADR 0004): a snapshot means **Server Tier**.
-pub(super) fn connect(target: &Target) -> Result<Snapshot, CallError> {
-    snapshot(target, CONNECT_TIMEOUT)
+fn request_line(method: Method) -> Vec<u8> {
+    let request = Request {
+        id: "desk".into(),
+        method,
+    };
+    let mut line = serde_json::to_vec(&request).unwrap_or_default();
+    line.push(b'\n');
+    line
+}
+
+/// One API request over the socket: in process for Local, `ssh -W` for a **Machine**.
+fn api_call(
+    target: &Target,
+    socket: &str,
+    method: Method,
+    timeout: Duration,
+) -> Result<Value, CallError> {
+    let fail = |link, message: String| CallError { link, message };
+    let value = match target {
+        Target::Local => {
+            let request = Request {
+                id: "desk".into(),
+                method,
+            };
+            ApiClient::for_target(ConnectionTarget::SocketPath(socket.into()))
+                .request_value_with_timeout(&request, timeout)
+                .map_err(|err| fail(Link::Offline, format!("api: {err}")))?
+        }
+        Target::Machine(machine) => {
+            let command = transport::socket_command(machine, socket)
+                .map_err(|err| fail(Link::Offline, format!("api: {err}")))?;
+            let output = transport::exchange(command, Some(&request_line(method)), timeout)
+                .map_err(|err| fail(Link::Offline, format!("api: {err}")))?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let Some(line) = stdout.lines().next().filter(|l| !l.trim().is_empty()) else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let link = transport::failure_link(output.status.code(), &stderr);
+                // ssh worked but nothing answered on the socket: the **Server** is gone.
+                let link = if link == Link::Ssh {
+                    Link::Offline
+                } else {
+                    link
+                };
+                return Err(fail(link, format!("api: {}", stderr.trim())));
+            };
+            serde_json::from_str(line).map_err(|err| fail(Link::Offline, format!("api: {err}")))?
+        }
+    };
+    if let Some(error) = value.get("error") {
+        return Err(fail(Link::Offline, format!("api: {error}")));
+    }
+    Ok(value)
+}
+
+fn snapshot_at(target: &Target, socket: &str, timeout: Duration) -> Result<Snapshot, CallError> {
+    let value = api_call(
+        target,
+        socket,
+        Method::SessionSnapshot(EmptyParams::default()),
+        timeout,
+    )?;
+    let snap = value
+        .get("result")
+        .and_then(|r| r.get("snapshot"))
+        .unwrap_or(&Value::Null);
+    let part = |key| {
+        snap.get(key)
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default()
+    };
+    Ok(build_snapshot(
+        &part("workspaces"),
+        &part("tabs"),
+        &part("panes"),
+    ))
+}
+
+pub(super) fn snapshot(target: &Target, timeout: Duration) -> Result<Snapshot, CallError> {
+    snapshot_at(target, &socket_path(target, timeout)?, timeout)
 }
 
 /// Joins the three list results. A tab's window shows `root_pane_id`; servers without that
@@ -150,26 +241,186 @@ pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Valu
     Snapshot { tasks, windows }
 }
 
-/// Background poller for one **Target**: sends a snapshot, or the [`Link`] of a failed poll,
-/// every [`POLL_INTERVAL`] until `stop` is set or the desk exits.
-pub(super) fn spawn_poller(target: Target, stop: Arc<AtomicBool>, events: Sender<DeskEvent>) {
-    std::thread::spawn(move || loop {
-        std::thread::sleep(POLL_INTERVAL);
-        if stop.load(Ordering::Relaxed) {
-            return;
-        }
+/// What wakes a [`spawn_watcher`] thread.
+pub(super) enum Wake {
+    /// A server event, or the desk asking for a fresh snapshot.
+    Refresh,
+    /// The event stream of this generation ended.
+    Closed(u64),
+}
+
+/// Server events that change desk state: **Tasks**, windows, and root panes.
+fn subscriptions() -> Vec<Subscription> {
+    vec![
+        Subscription::WorkspaceCreated {},
+        Subscription::WorkspaceRenamed {},
+        Subscription::WorkspaceClosed {},
+        Subscription::TabCreated {},
+        Subscription::TabClosed {},
+        Subscription::TabRenamed {},
+        Subscription::TabMoved {},
+        Subscription::PaneCreated {},
+        Subscription::PaneClosed {},
+    ]
+}
+
+/// Follows one **Target** (B23): subscribes to server events and sends a fresh snapshot after
+/// each burst, instead of polling. A **Machine** is pinged after [`PING_EVERY`] without
+/// traffic so a stalled link shows `! offline`. The first attempt reports
+/// [`DeskEvent::Connected`] and ends the thread on failure (**Tier** detection, ADR 0004);
+/// later failures, and every failure without `report_connect`, report the [`Link`] and retry. `wake` also takes [`Wake::Refresh`] from
+/// the desk, for windows whose stream ended.
+pub(super) fn spawn_watcher(
+    target: Target,
+    report_connect: bool,
+    stop: Arc<AtomicBool>,
+    wake: (Sender<Wake>, Receiver<Wake>),
+    events: Sender<DeskEvent>,
+) {
+    std::thread::spawn(move || {
         let key = target.key().to_string();
-        let event = match snapshot(&target, CALL_TIMEOUT) {
-            Ok(snap) => DeskEvent::Snapshot(key, snap),
-            Err(err) => {
-                tracing::warn!(err = %err.message, "desk: poll failed");
-                DeskEvent::Link(key, err.link)
+        let (tx, rx) = wake;
+        let mut first = report_connect;
+        let mut generation = 0;
+        while !stop.load(Ordering::Relaxed) {
+            generation += 1;
+            let result = watch(
+                &target, &key, &stop, &tx, &rx, generation, &events, &mut first,
+            );
+            if stop.load(Ordering::Relaxed) {
+                return;
             }
-        };
-        if stop.load(Ordering::Relaxed) || events.send(event).is_err() {
-            return;
+            if let Err(err) = result {
+                tracing::warn!(err = %err.message, "desk: watch failed");
+                let event = if first {
+                    DeskEvent::Connected(key.clone(), Err(err.link))
+                } else {
+                    DeskEvent::Link(key.clone(), err.link)
+                };
+                if events.send(event).is_err() || first {
+                    return;
+                }
+            }
+            first = false;
+            let until = Instant::now() + RETRY;
+            while Instant::now() < until && !stop.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(100));
+            }
         }
     });
+}
+
+#[allow(clippy::too_many_arguments)] // One watch attempt; the thread state is passed in.
+fn watch(
+    target: &Target,
+    key: &str,
+    stop: &AtomicBool,
+    tx: &Sender<Wake>,
+    rx: &Receiver<Wake>,
+    generation: u64,
+    events: &Sender<DeskEvent>,
+    first: &mut bool,
+) -> Result<(), CallError> {
+    let timeout = if *first {
+        CONNECT_TIMEOUT
+    } else {
+        CALL_TIMEOUT
+    };
+    let offline = |message: String| CallError {
+        link: Link::Offline,
+        message,
+    };
+    let socket = socket_path(target, timeout)?;
+    let mut stream = ApiStream::open(
+        target,
+        &socket,
+        &request_line(Method::EventsSubscribe(EventsSubscribeParams {
+            subscriptions: subscriptions(),
+        })),
+    )
+    .map_err(|err| offline(format!("subscribe: {err}")))?;
+    let Some(mut lines) = stream.lines.take() else {
+        return Err(offline("subscribe: no stream".into()));
+    };
+    let reader_tx = tx.clone();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let mut started = false;
+        loop {
+            line.clear();
+            match lines.read_line(&mut line) {
+                Ok(0) | Err(_) => break,
+                Ok(_) if !started => {
+                    started = line.contains("subscription_started");
+                    if !started {
+                        tracing::warn!(line = %line.trim(), "desk: subscribe refused");
+                        break;
+                    }
+                }
+                Ok(_) => {
+                    if reader_tx.send(Wake::Refresh).is_err() {
+                        return;
+                    }
+                }
+            }
+        }
+        let _ = reader_tx.send(Wake::Closed(generation));
+    });
+    // Subscribe first, then snapshot: no change falls between the two.
+    let snap = snapshot_at(target, &socket, timeout)?;
+    let event = if *first {
+        DeskEvent::Connected(key.to_string(), Ok(snap))
+    } else {
+        DeskEvent::Snapshot(key.to_string(), snap)
+    };
+    // Connected: later failures retry instead of ending the watcher.
+    *first = false;
+    if events.send(event).is_err() {
+        return Ok(());
+    }
+    let mut quiet_since = Instant::now();
+    loop {
+        if stop.load(Ordering::Relaxed) {
+            return Ok(());
+        }
+        match rx.recv_timeout(Duration::from_secs(1)) {
+            Ok(Wake::Refresh) => {
+                // One snapshot per burst of events.
+                std::thread::sleep(COALESCE);
+                let mut closed = false;
+                while let Ok(wake) = rx.try_recv() {
+                    closed |= matches!(wake, Wake::Closed(g) if g == generation);
+                }
+                let snap = snapshot_at(target, &socket, CALL_TIMEOUT)?;
+                if events
+                    .send(DeskEvent::Snapshot(key.to_string(), snap))
+                    .is_err()
+                {
+                    return Ok(());
+                }
+                if closed {
+                    return Err(offline("event stream closed".into()));
+                }
+                quiet_since = Instant::now();
+            }
+            Ok(Wake::Closed(g)) if g == generation => {
+                return Err(offline("event stream closed".into()));
+            }
+            Ok(Wake::Closed(_)) => {}
+            Err(RecvTimeoutError::Timeout) => {
+                if matches!(target, Target::Machine(_)) && quiet_since.elapsed() >= PING_EVERY {
+                    api_call(
+                        target,
+                        &socket,
+                        Method::Ping(PingParams::default()),
+                        PING_TIMEOUT,
+                    )?;
+                    quiet_since = Instant::now();
+                }
+            }
+            Err(RecvTimeoutError::Disconnected) => return Ok(()),
+        }
+    }
 }
 
 fn created_window(value: &Value) -> io::Result<WindowInfo> {
@@ -280,5 +531,22 @@ mod tests {
     fn tab_without_panes_has_no_window() {
         let tabs = [json!({"tab_id": "w_1:1", "workspace_id": "w_1", "label": "1"})];
         assert!(build_snapshot(&[], &tabs, &[]).windows.is_empty());
+    }
+
+    #[test]
+    fn subscribe_request_is_one_json_line_with_desk_events() {
+        let line = request_line(Method::EventsSubscribe(EventsSubscribeParams {
+            subscriptions: subscriptions(),
+        }));
+        assert_eq!(line.iter().filter(|b| **b == b'\n').count(), 1);
+        let value: Value = serde_json::from_slice(&line).expect("json");
+        assert_eq!(value["method"], "events.subscribe");
+        let types: Vec<&str> = value["params"]["subscriptions"]
+            .as_array()
+            .expect("subscriptions")
+            .iter()
+            .filter_map(|s| s["type"].as_str())
+            .collect();
+        assert!(types.contains(&"tab.created") && types.contains(&"workspace.closed"));
     }
 }
