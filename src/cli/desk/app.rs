@@ -1700,7 +1700,7 @@ pub(super) fn run() -> io::Result<i32> {
     }
     app.saved = saved;
     spawn_stdin_reader(tx);
-    let result = event_loop(&mut app, &mut terminal, &rx);
+    let result = event_loop(&mut app, &mut terminal, &rx, &state_path);
     state::save(&state_path, &app.capture());
     for (_, data) in app.data.drain() {
         if let Some(session) = data.session {
@@ -1717,8 +1717,10 @@ fn event_loop(
     app: &mut App,
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
     rx: &Receiver<DeskEvent>,
+    state_path: &std::path::Path,
 ) -> io::Result<()> {
     let mut framer = RawInputByteFramer::for_host_input();
+    let mut autosave = Autosave::default();
     let mut dirty = true;
     let mut last_draw = Instant::now() - MIN_DRAW_INTERVAL;
     let mut last_input = Instant::now();
@@ -1777,8 +1779,45 @@ fn event_loop(
         if app.desk.windows.is_empty() && app.data.is_empty() && !app.quit {
             dirty = true;
         }
+        autosave.tick(app, state_path);
     }
     Ok(())
+}
+
+/// Writes `desk.json` once the layout has stayed unchanged for [`SAVE_AFTER`] (B23), so a
+/// killed desk keeps its last layout. Checked at most every [`SAVE_CHECK`].
+#[derive(Default)]
+struct Autosave {
+    written: Option<state::DeskState>,
+    pending: Option<(state::DeskState, Instant)>,
+    checked: Option<Instant>,
+}
+
+const SAVE_AFTER: Duration = Duration::from_secs(1);
+const SAVE_CHECK: Duration = Duration::from_millis(250);
+
+impl Autosave {
+    fn tick(&mut self, app: &App, path: &std::path::Path) {
+        if self.checked.is_some_and(|at| at.elapsed() < SAVE_CHECK) {
+            return;
+        }
+        self.checked = Some(Instant::now());
+        let now = app.capture();
+        if self.written.as_ref() == Some(&now) {
+            self.pending = None;
+            return;
+        }
+        match &self.pending {
+            Some((pending, since)) if *pending == now => {
+                if since.elapsed() >= SAVE_AFTER {
+                    state::save(path, &now);
+                    self.written = Some(now);
+                    self.pending = None;
+                }
+            }
+            _ => self.pending = Some((now, Instant::now())),
+        }
+    }
 }
 
 /// `HERDR_DESK_STATS=<path>` writes frame and draw counters on exit (spike measurements).

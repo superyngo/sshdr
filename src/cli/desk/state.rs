@@ -97,10 +97,13 @@ pub(super) fn load(path: &Path) -> DeskState {
         .unwrap_or_default()
 }
 
+/// Written to a temporary file and renamed, so a desk killed mid-write leaves the old file.
 pub(super) fn save(path: &Path, state: &DeskState) {
+    let tmp = path.with_extension("json.tmp");
     let result = serde_json::to_vec_pretty(state)
         .map_err(std::io::Error::other)
-        .and_then(|bytes| std::fs::write(path, bytes));
+        .and_then(|bytes| std::fs::write(&tmp, bytes))
+        .and_then(|()| std::fs::rename(&tmp, path));
     if let Err(err) = result {
         tracing::warn!(%err, path = %path.display(), "desk: saving window state failed");
     }
@@ -224,6 +227,7 @@ mod tests {
         assert_eq!(load(&file), DeskState::default());
         save(&file, &state);
         assert_eq!(load(&file), state);
+        assert!(!dir.join("desk.json.tmp").exists());
     }
 
     #[test]
