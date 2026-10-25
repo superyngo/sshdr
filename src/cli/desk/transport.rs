@@ -235,7 +235,7 @@ pub(super) fn failure_link(code: Option<i32>, stderr: &str) -> Link {
 }
 
 /// POSIX single-quote for the remote shell.
-fn quote(arg: &str) -> String {
+pub(super) fn quote(arg: &str) -> String {
     if !arg.is_empty()
         && arg
             .bytes()

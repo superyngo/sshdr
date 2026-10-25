@@ -18,6 +18,7 @@ use ratatui::{
 };
 
 use super::dialog::{Dialog, DialogButton, Outcome};
+use super::folder::{self, Folder};
 use super::menu::{Menu, MenuHit, MenuItem};
 use super::server::{self, Snapshot, TaskInfo, WindowInfo};
 use super::state;
@@ -54,6 +55,10 @@ enum Hit {
     Task(usize),
     Menu(MenuHit),
     Dialog(DialogButton),
+    /// The **Machines** desktop icon.
+    Icon,
+    /// A row of the **Machines Folder**.
+    FolderRow(usize),
 }
 
 /// What a menu row does.
@@ -73,6 +78,13 @@ enum Action {
     MinimizeTask(TaskRef),
     RestoreTask(TaskRef),
     CloseTask(TaskRef),
+    OpenFolder,
+    /// Double-click in the **Machines Folder**: connect, or show what is already open.
+    OpenMachine(String),
+    Connect(String),
+    Disconnect(String),
+    /// **SSH Tier**: a local window running `ssh`.
+    OpenSsh(String),
 }
 
 /// A **Task** on a **Target**: (target key, workspace id).
@@ -156,6 +168,11 @@ struct App {
     quit: bool,
     notice: Option<String>,
     stats: Stats,
+    folder: Option<Folder>,
+    last_icon_click: Option<Instant>,
+    last_row_click: Option<(usize, Instant)>,
+    /// **Machines** connected by hand: an **SSH Tier** result opens an `ssh` window.
+    ssh_on_tier: Vec<String>,
 }
 
 fn desk_area(screen: Rect) -> Rect {
@@ -330,20 +347,20 @@ impl App {
     fn new_window(&mut self) {
         let created = match self.current_task() {
             Some((key, ws)) => self.new_window_in(&key, &ws),
-            None => self.new_task(LOCAL_KEY, None).map(|_| ()),
+            None => self.new_task(LOCAL_KEY, None),
         };
         if let Err(err) = created {
             self.notice = Some(format!("new window failed: {err}"));
         }
     }
 
-    fn new_window_in(&mut self, key: &str, ws: &str) -> io::Result<()> {
+    fn new_window_in(&mut self, key: &str, ws: &str) -> io::Result<WinId> {
         let target = self
             .target(key)
             .cloned()
             .ok_or_else(|| io::Error::other("machine not connected"))?;
         let info = server::create_window(&target, ws)?;
-        self.attach(key, info, None).map(|_| ())
+        self.attach(key, info, None)
     }
 
     fn new_task(&mut self, key: &str, label: Option<&str>) -> io::Result<WinId> {
@@ -491,7 +508,157 @@ impl App {
                 self.apply(key, snap);
                 self.start_poller(key);
             }
-            Err(link) => self.set_link(key, link),
+            Err(link) => {
+                self.set_link(key, link);
+                let by_hand = self.ssh_on_tier.iter().any(|k| k == key);
+                self.ssh_on_tier.retain(|k| k != key);
+                if link == Link::Ssh && by_hand {
+                    self.open_ssh(key);
+                }
+            }
+        }
+    }
+
+    /// **SSH Tier**: a new window in the local **Task** named after the **Machine**, running
+    /// `ssh <target>` (plan decision 3A).
+    fn open_ssh(&mut self, key: &str) {
+        let Some(Target::Machine(machine)) = self.target(key).cloned() else {
+            return;
+        };
+        let task = self
+            .tasks
+            .iter()
+            .find(|t| t.target == LOCAL_KEY && t.info.label == machine.label)
+            .map(|t| t.info.workspace_id.clone());
+        let opened = match task {
+            Some(ws) => self.new_window_in(LOCAL_KEY, &ws),
+            None => self.new_task(LOCAL_KEY, Some(&machine.label)),
+        };
+        match opened {
+            Ok(id) => {
+                if let Some(pane) = self.data.get(&id).map(|d| d.info.pane_id.clone()) {
+                    let command = format!("ssh {}", transport::quote(&machine.target));
+                    server::run_in_pane(&Target::Local, &pane, &command);
+                }
+            }
+            Err(err) => self.notice = Some(format!("ssh window failed: {err}")),
+        }
+    }
+
+    /// Rows of the **Machines Folder**, in `targets` order.
+    fn folder_rows(&self) -> Vec<folder::Row> {
+        self.targets
+            .iter()
+            .map(|t| {
+                let windows = self
+                    .data
+                    .values()
+                    .filter(|d| d.target == t.target.key())
+                    .count();
+                let (target, status) = match &t.target {
+                    Target::Local => ("this computer".to_string(), "Local".to_string()),
+                    Target::Machine(m) => (m.target.clone(), t.link.text().to_string()),
+                };
+                let status = if t.poller.is_some() && windows > 0 {
+                    format!("{status} · {windows}")
+                } else {
+                    status
+                };
+                folder::Row {
+                    name: t.target.label().to_string(),
+                    target,
+                    status,
+                    alert: matches!(t.link, Link::Auth | Link::Offline),
+                }
+            })
+            .collect()
+    }
+
+    fn open_folder(&mut self) {
+        if let Some(f) = self.folder {
+            if self.desk.get(f.win).is_some() {
+                self.desk.raise(f.win);
+                return;
+            }
+        }
+        let size = folder::size(&self.folder_rows());
+        let win = self
+            .desk
+            .open(folder::TITLE.to_string(), size, self.desk_rect());
+        self.folder = Some(Folder { win, selected: 0 });
+    }
+
+    /// Double-click or Enter on a folder row.
+    fn open_machine(&mut self, key: &str) {
+        let Some(state) = self.targets.iter().find(|t| t.target.key() == key) else {
+            return;
+        };
+        match (state.link, state.poller.is_some()) {
+            (Link::Ssh, false) => self.open_ssh(key),
+            (Link::Connecting, _) => {}
+            (_, true) => {
+                // Connected (or Local): bring its windows forward.
+                let ids: Vec<WinId> = self
+                    .desk
+                    .windows
+                    .iter()
+                    .map(|w| w.id)
+                    .filter(|id| self.data.get(id).is_some_and(|d| d.target == key))
+                    .collect();
+                for id in ids {
+                    self.desk.raise(id);
+                }
+            }
+            (_, false) => {
+                self.ssh_on_tier.push(key.to_string());
+                self.connect(key);
+            }
+        }
+    }
+
+    fn folder_menu(&self, index: usize, at: (u16, u16)) -> Option<Menu<Action>> {
+        let state = self.targets.get(index)?;
+        let key = state.target.key().to_string();
+        let mut items = Vec::new();
+        match (&state.target, state.poller.is_some()) {
+            (Target::Local, _) => {
+                items.push(MenuItem::new("Show windows", "", Action::OpenMachine(key)))
+            }
+            (Target::Machine(_), true) => {
+                items.push(MenuItem::new(
+                    "Show windows",
+                    "",
+                    Action::OpenMachine(key.clone()),
+                ));
+                items.push(MenuItem::new("Disconnect", "", Action::Disconnect(key)));
+            }
+            (Target::Machine(_), false) => {
+                items.push(MenuItem::new("Connect", "", Action::Connect(key.clone())));
+                items.push(MenuItem::new("Open ssh window", "", Action::OpenSsh(key)));
+            }
+        }
+        Menu::open(state.target.label().to_string(), at, items)
+    }
+
+    /// Keys while the **Machines Folder** has focus.
+    fn folder_key(&mut self, chunk: &[u8]) {
+        let Some(f) = self.folder.as_mut() else {
+            return;
+        };
+        let last = self.targets.len().saturating_sub(1);
+        match chunk {
+            b"\x1b[A" | b"\x1bOA" => f.selected = f.selected.saturating_sub(1),
+            b"\x1b[B" | b"\x1bOB" => f.selected = (f.selected + 1).min(last),
+            b"\r" | b"\n" => {
+                let key = self
+                    .targets
+                    .get(f.selected)
+                    .map(|t| t.target.key().to_string());
+                if let Some(key) = key {
+                    self.open_machine(&key);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -591,6 +758,9 @@ impl App {
 
     fn close_window(&mut self, id: WinId) {
         self.desk.close(id);
+        if self.folder.is_some_and(|f| f.win == id) {
+            self.folder = None;
+        }
         if let Some(data) = self.data.remove(&id) {
             if let Some(session) = data.session {
                 session.release();
@@ -734,6 +904,10 @@ impl App {
             self.prefix_armed = true;
             return;
         }
+        if self.desk.focus.is_some() && self.desk.focus == self.folder.map(|f| f.win) {
+            self.folder_key(chunk);
+            return;
+        }
         self.forward_input(chunk);
     }
 
@@ -846,6 +1020,34 @@ impl App {
                         self.sync_sizes();
                     }
                     (Some(Hit::Close(id)), MouseButton::Left) => self.close_window(id),
+                    (Some(Hit::Icon), MouseButton::Left) => {
+                        let now = Instant::now();
+                        let double = self
+                            .last_icon_click
+                            .is_some_and(|at| now.duration_since(at) < DOUBLE_CLICK);
+                        self.last_icon_click = Some(now);
+                        if double {
+                            self.open_folder();
+                        }
+                    }
+                    (Some(Hit::FolderRow(index)), button) => {
+                        if let Some(f) = self.folder.as_mut() {
+                            self.desk.raise(f.win);
+                            f.selected = index;
+                        }
+                        let now = Instant::now();
+                        let double = matches!(self.last_row_click,
+                            Some((last, at)) if last == index && now.duration_since(at) < DOUBLE_CLICK);
+                        self.last_row_click = Some((index, now));
+                        let key = self.targets.get(index).map(|t| t.target.key().to_string());
+                        match (button, key) {
+                            (MouseButton::Right, _) => {
+                                self.menu = self.folder_menu(index, (column, row));
+                            }
+                            (MouseButton::Left, Some(key)) if double => self.open_machine(&key),
+                            _ => {}
+                        }
+                    }
                     (Some(Hit::Start), MouseButton::Left) => {
                         self.menu = Some(start_menu((self.screen.x, row)));
                     }
@@ -926,6 +1128,8 @@ impl App {
             .buffer_mut()
             .set_style(desk, Style::default().bg(DESK_BG));
         hits.push(desk, Hit::Desktop);
+        hits.push(folder::render_icon(desk, frame.buffer_mut()), Hit::Icon);
+        let folder_rows = self.folder.map(|_| self.folder_rows());
 
         for w in self.desk.windows.iter().filter(|w| !w.minimized) {
             let rect = w.rect.intersection(desk);
@@ -941,6 +1145,16 @@ impl App {
             let inner = wm::inner(rect);
             if let Some(data) = self.data.get(&w.id) {
                 data.mirror.render(frame, inner, focused);
+            }
+            let folder_rows = match (self.folder, &folder_rows) {
+                (Some(f), Some(rows)) if f.win == w.id => Some((f.selected, rows)),
+                _ => None,
+            };
+            let mut row_hits = Vec::new();
+            if let Some((selected, rows)) = folder_rows {
+                folder::render(rows, selected, inner, frame.buffer_mut(), |rect, i| {
+                    row_hits.push((rect, i));
+                });
             }
             // Title bar: title on the left, [_][□][×] on the right.
             let buttons_w = 9u16;
@@ -958,6 +1172,9 @@ impl App {
                 title_style,
             );
             hits.push(inner, Hit::Content(w.id));
+            for (rect, i) in row_hits {
+                hits.push(rect, Hit::FolderRow(i));
+            }
             hits.push(
                 Rect::new(rect.x + 1, rect.y, rect.width.saturating_sub(2), 1),
                 Hit::Title(w.id),
@@ -1203,6 +1420,14 @@ impl App {
                 self.sync_sizes();
             }
             Action::Quit => self.quit = true,
+            Action::OpenFolder => self.open_folder(),
+            Action::OpenMachine(key) => self.open_machine(&key),
+            Action::Connect(key) => {
+                self.ssh_on_tier.push(key.clone());
+                self.connect(&key);
+            }
+            Action::Disconnect(key) => self.disconnect(&key),
+            Action::OpenSsh(key) => self.open_ssh(&key),
             Action::NewWindowIn((key, ws)) => {
                 if let Err(err) = self.new_window_in(&key, &ws) {
                     self.notice = Some(format!("new window failed: {err}"));
@@ -1289,6 +1514,7 @@ const START_TITLE: &str = "Start";
 /// The **Start Menu**, opening upward from the Start button.
 fn start_menu(at: (u16, u16)) -> Menu<Action> {
     let items = vec![
+        MenuItem::new("Machines", "", Action::OpenFolder),
         MenuItem::new("New window", "^\\ n", Action::NewWindow),
         MenuItem::new("New task", "", Action::NewTask),
         MenuItem::new("Tile all", "^\\ t", Action::TileAll),
@@ -1417,6 +1643,10 @@ pub(super) fn run() -> io::Result<i32> {
         quit: false,
         notice: None,
         stats: Stats::default(),
+        folder: None,
+        last_icon_click: None,
+        last_row_click: None,
+        ssh_on_tier: Vec::new(),
     };
     let reattached = snap.windows.len();
     app.apply(LOCAL_KEY, snap);
@@ -1554,6 +1784,7 @@ mod tests {
         assert_eq!(
             actions,
             [
+                Action::OpenFolder,
                 Action::NewWindow,
                 Action::NewTask,
                 Action::TileAll,
