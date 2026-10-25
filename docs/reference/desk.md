@@ -33,21 +33,24 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 | **Task** button | click | the **Machine**'s windows (`▁` = minimized); choosing one restores and raises it |
 | **Task** button | right click | New window, Minimize all, Restore all, then Disconnect (connected **Machine**) or Connect |
 | **Taskbar** space without a button | drag | move the bar to the screen edge nearest the pointer (the landing place is highlighted) |
-| **Taskbar** space without a button | right click | Top, Bottom, Left, Right (`•` marks the current one), Larger, Smaller |
+| **Taskbar** space without a button | right click | Top, Bottom, Left, Right (`•` marks the current one), Collapse or Expand (left or right only), Larger, Smaller (not while collapsed) |
 | Thin line along the **Taskbar** (`▁▔▏▕`, under windows) | drag | resize: 1–4 rows at the top or bottom, 12–40 columns at the left or right |
 
 | **Machines Folder** row | double click, Enter | connect (see below); a connected **Machine** raises its windows |
-| **Machines Folder** row | right click | Connect, Open ssh window (not connected); Show windows, Disconnect (connected) |
+| **Machines Folder** row | right click | Connect, Open ssh window (not connected); Show windows, New window, Disconnect (connected); Show windows, New window (Local) |
+| `«` / `»` on the last row of a left or right **Taskbar** | click | collapse it to 4 columns / expand it again (as herdr's sidebar) |
 
 A top or bottom **Taskbar** wraps its **Task** buttons onto further rows; a left or right one
-shows Start on the first row, one **Task** per row below, and the hint on the last row. Menus
+shows Start on the first row, one **Task** per row below, and the hint and `«` on the last row.
+Collapsed, it shows `⊞`, each **Task** as its first character and window count (`L4`), and `»`;
+its buttons work as before, and the bar cannot be resized until expanded. Menus
 opened from the bar open on the desk side of it; maximized windows follow the bar.
 
 Menus: arrow keys move, Enter chooses, Esc closes. Dialogs: Enter confirms, Esc cancels.
 
 ## Keys
 
-Ctrl+\ then: `n` new window (workspace) in the focused window's **Task** · `w` close · `z` minimize · `m` maximize · `t` tile · `Tab` next ·
+Ctrl+\ then: `n` new window (workspace) in the focused window's **Task** · `w` close · `z` minimize · `m` maximize · `t` tile · `b` collapse or expand a side **Taskbar** · `Tab` next ·
 `q` quit · Ctrl+\ sends a literal Ctrl+\. Everything else goes to the focused pane of the focused window.
 
 ## Server state
@@ -103,8 +106,8 @@ The desk writes `desk.json` in the Session data directory (`crate::session::data
 layout has been unchanged for 1 s, and on quit (temporary file, then rename):
 per window the position, size, maximize state, minimize state, and stacking order, keyed by the
 workspace id (local) or `<profile id>/<workspace id>` (**Machine**) in `workspace`, plus the
-**Machines** that were connected, the **Taskbar** edge and size (`taskbar`, omitted at the default
-bottom, 1 row), and the local `ssh` workspaces with their **Machine** (`ssh_workspaces`).
+**Machines** that were connected, the **Taskbar** edge, size, and collapse state (`taskbar`, omitted at the
+default bottom, 1 row), and the local `ssh` workspaces with their **Machine** (`ssh_workspaces`).
 Entries of builds before B25 (keyed by terminal id) match no window, so those windows open
 stacked once.
 The next start restores the layout and reconnects those **Machines**; a **Machine**'s windows get their saved place when they open. Windows without an entry open stacked on top.

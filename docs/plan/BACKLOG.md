@@ -18,8 +18,6 @@ deleted. Evidence cites files and symbols, not line numbers.
 | B19 | Touch layout for the **Desktop** (tap = press + release; no drag, right-click, or long-press) | `~/repos/wens-tui-lab/src/mobile.rs`; tui-components contract C12; ADR 0006 | 2026-10-24 | P3 | L | Spec approved; after the first release |
 | B27 | Decide where **Native Windows** (the **Machines Folder**, later **Apps**) belong on the **Taskbar**; the owner is considering treating a **Machine**'s **Task** as one **App** | ADR 0008 Consequences; `src/cli/desk/app.rs` `task_keys` | 2026-10-25 | P2 | S | A decision recorded (ADR or plan) |
 | B28 | Drag a divider between panes in a **Terminal Window** to change the split ratio (`layout.set_split_ratio`) | `src/cli/desk/app.rs` `layout_rects`, `draw_dividers` | 2026-10-25 | P3 | M | Dragging a divider resizes both panes on the **Server** |
-| B29 | **Machines Folder** right-click menu on a connected **Server Tier** **Machine** (and Local) offers New window | `src/cli/desk/app.rs` `folder_menu` | 2026-10-25 | P2 | S | Right-click → New window opens a new workspace window on that **Machine** |
-| B30 | A left or right **Taskbar** can collapse to a narrow strip and expand again, like herdr's sidebar (`«`/`»`, `prefix+b`, compact mode); the state is saved | `src/cli/desk/taskbar.rs`, `app.rs`; herdr `client/shell/sidebar.rs` | 2026-10-25 | P2 | M | Toggle collapses and expands a side **Taskbar**; buttons stay usable while collapsed; restored after restart |
 
 ## Pending verification
 
@@ -47,6 +45,8 @@ Deferred by ADR 0006 (2026-10-24); resume when **Fleet** and **Remote Backup** r
 
 | ID | Item | Commit |
 |---|---|---|
+| B29 | **Machines Folder** right-click menu offers New window on Local and connected **Server Tier** **Machines** | feat: desk machines folder offers new window |
+| B30 | A left or right **Taskbar** collapses to 4 columns (`«`/`»`, `^\ b`, menu Collapse/Expand) like herdr's compact sidebar; saved in `desk.json` | feat: desk side taskbar collapses like the herdr sidebar |
 | B24 | Dropped the `▣ Machines` desktop icon; the **Machines Folder** opens from the **Start Menu** | feat: desk drops the machines desktop icon |
 | B25 | **Desktop** re-mapped to herdr's hierarchy (ADR 0008): **Task** = **Machine**, **Terminal Window** = workspace with a tab strip (`tab focus`, `+`, `×`, rename), `[×]` closes the workspace; plan `2026-10-25-b24-b25-desk-hierarchy.md` | feat: desk windows are workspaces and tasks are machines |
 | B26 | A tab's split panes show inside its window as the **Server** lays them out; click focuses a pane (`pane.focus`); dividers not draggable yet | feat: desk shows split panes inside a tab |

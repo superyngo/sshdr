@@ -6,6 +6,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: desk machines folder offers new window (B29) on Local and connected machines.
+- feat: desk side taskbar collapses like the herdr sidebar (B30): `«`/`»`, `Ctrl+\ b`, or the
+  taskbar menu; the state is saved.
 - feat: desk drops the machines desktop icon (B24); the Machines Folder opens from Start.
 - feat: desk windows are workspaces and tasks are machines (B25, ADR 0008): one Taskbar button
   per machine; each window is a workspace with a tab strip (click shows a tab for every client,
