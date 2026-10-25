@@ -46,9 +46,11 @@ impl Target {
     }
 }
 
-/// Saved **Machines** from the endpoint catalog; read only.
+/// Saved **Machines**: enabled endpoint catalog profiles, then those saved with
+/// `machine add --ssh-only` (B11, default Session). Read only; the **Tier** of each is still
+/// detected on connect (ADR 0004).
 pub(super) fn machines() -> Vec<Machine> {
-    match crate::client::endpoint::EndpointCatalog::load_profiles() {
+    let mut out: Vec<Machine> = match crate::client::endpoint::EndpointCatalog::load_profiles() {
         Ok(profiles) => profiles
             .into_iter()
             .filter(|p| p.enabled)
@@ -63,7 +65,17 @@ pub(super) fn machines() -> Vec<Machine> {
             tracing::warn!(%err, "desk: reading saved machines failed");
             Vec::new()
         }
+    };
+    match crate::cli::ssh_machines::load() {
+        Ok(machines) => out.extend(machines.into_iter().map(|m| Machine {
+            id: m.id.to_string(),
+            label: m.label,
+            target: m.target,
+            session: crate::session::DEFAULT_SESSION_NAME.to_owned(),
+        })),
+        Err(err) => tracing::warn!(%err, "desk: reading ssh-only machines failed"),
     }
+    out
 }
 
 /// A command that runs `herdr <args>` on `target`; remote calls use ControlMaster `master`
