@@ -4,6 +4,12 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ## [Unreleased]
 
+### 2026-10-25
+
+- docs: backlog adds the owner's Desktop suggestions: minimize into Taskbar groups, right-click
+  rename menus, and New/Quit under the Start Menu (B14); hierarchy mapping decision (B20); movable,
+  resizable Taskbar (B21).
+
 ### 2026-10-24
 
 - docs: ADR 0006 turns sshdr into a TUI Desktop built as a separate Client (`herdr desk`) whose
