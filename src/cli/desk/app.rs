@@ -66,6 +66,8 @@ enum Hit {
     FolderRow(usize),
     /// **Taskbar** space without a button: drag moves the bar, right click opens its menu.
     Bar,
+    /// `«`/`»` on a side **Taskbar**: collapse or expand it (B30).
+    BarToggle,
     /// The desk line touching the **Taskbar**: drag resizes the bar.
     Grip,
 }
@@ -91,6 +93,8 @@ enum Action {
     TaskbarEdge(Edge),
     /// Grow (+1) or shrink (-1) the **Taskbar**.
     TaskbarSize(i8),
+    /// Collapse or expand a side **Taskbar** (B30).
+    ToggleTaskbar,
     OpenFolder,
     /// Double-click in the **Machines Folder**: connect, or show what is already open.
     OpenMachine(String),
@@ -271,6 +275,15 @@ impl App {
         self.bar.desk(self.screen)
     }
 
+    /// Collapse or expand a side **Taskbar** (B30); top and bottom bars stay as they are.
+    fn toggle_bar(&mut self) {
+        if self.bar.edge.vertical() {
+            let mut place = self.bar;
+            place.collapsed = !place.collapsed;
+            self.set_bar(place);
+        }
+    }
+
     /// Put the **Taskbar** at `place`; windows refit the new desk (maximized ones fill it).
     fn set_bar(&mut self, place: Place) {
         self.bar = place.sized(place.size, self.screen);
@@ -290,8 +303,18 @@ impl App {
                 MenuItem::new(edge.label(), mark, Action::TaskbarEdge(edge))
             })
             .collect();
-        items.push(MenuItem::new("Larger", "", Action::TaskbarSize(1)));
-        items.push(MenuItem::new("Smaller", "", Action::TaskbarSize(-1)));
+        if self.bar.edge.vertical() {
+            let label = if self.bar.collapsed {
+                "Expand"
+            } else {
+                "Collapse"
+            };
+            items.push(MenuItem::new(label, "^\\ b", Action::ToggleTaskbar));
+        }
+        if !self.bar.is_collapsed() {
+            items.push(MenuItem::new("Larger", "", Action::TaskbarSize(1)));
+            items.push(MenuItem::new("Smaller", "", Action::TaskbarSize(-1)));
+        }
         Menu::open("Taskbar", at, items).map(|m| self.bar_popup(m, at))
     }
 
@@ -1162,6 +1185,7 @@ impl App {
                         self.sync_sizes();
                     }
                 }
+                b"b" => self.toggle_bar(),
                 b"q" => self.quit = true,
                 b"\t" => {
                     if let Some(first) = self.desk.windows.first().map(|w| w.id) {
@@ -1379,6 +1403,7 @@ impl App {
                         }
                         .map(|m| self.bar_popup(m, at));
                     }
+                    (Some(Hit::BarToggle), MouseButton::Left) => self.toggle_bar(),
                     (Some(Hit::Bar), MouseButton::Left) => {
                         self.bar_drag = Some(BarDrag::Move(None))
                     }
@@ -1598,9 +1623,16 @@ impl App {
             let keys = self.task_keys();
             let texts: Vec<String> = keys
                 .iter()
-                .map(|key| taskbar::task_text(&self.label(key), self.task_windows(key).len()))
+                .map(|key| {
+                    let windows = self.task_windows(key).len();
+                    if self.bar.is_collapsed() {
+                        taskbar::task_short(&self.label(key), windows)
+                    } else {
+                        taskbar::task_text(&self.label(key), windows)
+                    }
+                })
                 .collect();
-            let layout = taskbar::layout(bar, self.bar.edge, texts);
+            let layout = taskbar::layout(bar, self.bar.edge, self.bar.collapsed, texts);
             let start_style = if self.menu.as_ref().is_some_and(|m| m.title == START_TITLE) {
                 Style::default().bg(FOCUS_BORDER).fg(Color::Black)
             } else {
@@ -1612,7 +1644,11 @@ impl App {
             buf.set_stringn(
                 layout.start.x,
                 layout.start.y,
-                taskbar::START,
+                if self.bar.is_collapsed() {
+                    taskbar::START_SHORT
+                } else {
+                    taskbar::START
+                },
                 usize::from(layout.start.width),
                 start_style,
             );
@@ -1627,10 +1663,20 @@ impl App {
                 buf.set_string(button.rect.x, button.rect.y, &button.text, style);
                 hits.push(button.rect, Hit::Task(index));
             }
+            if let Some(toggle) = layout.toggle {
+                let glyph = if self.bar.is_collapsed() { "»" } else { "«" };
+                buf.set_string(
+                    toggle.x,
+                    toggle.y,
+                    glyph,
+                    Style::default().bg(BAR_BG).fg(Color::Gray),
+                );
+                hits.push(toggle, Hit::BarToggle);
+            }
             if let Some(hint_rect) = layout.hint {
                 let hint = match (&self.notice, self.prefix_armed) {
                     (_, true) => {
-                        "desk: n new · w close · z min · m max · t tile · Tab next · q quit"
+                        "desk: n new · w close · z min · m max · t tile · b bar · Tab next · q quit"
                             .to_string()
                     }
                     (Some(notice), false) => notice.clone(),
@@ -1797,6 +1843,7 @@ impl App {
                 self.sync_sizes();
             }
             Action::Quit => self.quit = true,
+            Action::ToggleTaskbar => self.toggle_bar(),
             Action::TaskbarEdge(edge) => self.set_bar(self.bar.moved(edge, self.screen)),
             Action::TaskbarSize(delta) => {
                 let size = self.bar.size.saturating_add_signed(i16::from(delta));
@@ -2307,7 +2354,7 @@ mod tests {
         for edge in [Edge::Bottom, Edge::Top, Edge::Left, Edge::Right] {
             let place = Place::default().moved(edge, screen);
             let (bar, desk) = (place.bar(screen), place.desk(screen));
-            let start = taskbar::layout(bar, edge, Vec::new()).start;
+            let start = taskbar::layout(bar, edge, false, Vec::new()).start;
             let menu = bar_popup(place, screen, start_menu(), (start.x, start.y));
             let rect = menu.rect(desk).unwrap();
             assert_eq!(rect.intersection(desk), rect, "{edge:?}");

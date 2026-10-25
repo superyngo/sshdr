@@ -13,6 +13,10 @@ pub(super) const START: &str = " ⊞ Start ";
 pub(super) const ROWS: (u16, u16) = (1, 4);
 /// Columns of a left or right **Taskbar**.
 pub(super) const COLUMNS: (u16, u16) = (12, 40);
+/// Columns of a collapsed left or right **Taskbar** (herdr's compact sidebar width).
+pub(super) const COLLAPSED: u16 = 4;
+/// Start button of a collapsed **Taskbar**.
+pub(super) const START_SHORT: &str = " ⊞ ";
 /// Desk space always left beside the **Taskbar**.
 const MIN_DESK: (u16, u16) = (20, 6);
 /// Shortest hint worth drawing.
@@ -49,6 +53,9 @@ pub(super) struct Place {
     pub edge: Edge,
     /// Rows (top, bottom) or columns (left, right).
     pub size: u16,
+    /// A left or right bar shrunk to [`COLLAPSED`] columns (B30); `size` is kept for expanding.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collapsed: bool,
 }
 
 impl Default for Place {
@@ -56,6 +63,7 @@ impl Default for Place {
         Self {
             edge: Edge::Bottom,
             size: ROWS.0,
+            collapsed: false,
         }
     }
 }
@@ -79,6 +87,7 @@ impl Place {
         Self {
             edge: self.edge,
             size: size.clamp(min, max).min(room.max(min)),
+            collapsed: self.collapsed,
         }
     }
 
@@ -89,12 +98,26 @@ impl Place {
             (_, true) => 24,
             (_, false) => ROWS.0,
         };
-        Self { edge, size }.sized(size, screen)
+        Self {
+            edge,
+            size,
+            collapsed: self.collapsed,
+        }
+        .sized(size, screen)
+    }
+
+    /// Collapsed and on a side: drawn [`COLLAPSED`] columns wide.
+    pub fn is_collapsed(self) -> bool {
+        self.collapsed && self.edge.vertical()
     }
 
     /// The **Taskbar** rectangle; empty when the screen is too small for it.
     pub fn bar(self, screen: Rect) -> Rect {
-        let size = self.sized(self.size, screen).size;
+        let size = if self.is_collapsed() {
+            COLLAPSED
+        } else {
+            self.sized(self.size, screen).size
+        };
         let rect = match self.edge {
             Edge::Bottom => Rect::new(
                 screen.x,
@@ -137,6 +160,9 @@ impl Place {
 
     /// The desk row or column touching the **Taskbar**: dragging it resizes the bar.
     pub fn grip(self, screen: Rect) -> Rect {
+        if self.is_collapsed() {
+            return Rect::default();
+        }
         let desk = self.desk(screen);
         let rect = match self.edge {
             Edge::Bottom => Rect::new(desk.x, desk.bottom().saturating_sub(1), desk.width, 1),
@@ -190,6 +216,8 @@ pub(super) struct Layout {
     pub start: Rect,
     pub buttons: Vec<Button>,
     pub hint: Option<Rect>,
+    /// `«` (expanded) or `»` (collapsed) on the last row of a side bar.
+    pub toggle: Option<Rect>,
 }
 
 /// Button text for a **Task**: label (cut to [`MAX_LABEL`]) and its window count.
@@ -205,13 +233,26 @@ pub(super) fn task_text(label: &str, windows: usize) -> String {
     format!(" {cut} ·{windows} ")
 }
 
+/// Button text for a **Task** on a collapsed bar: its first character and window count.
+pub(super) fn task_short(label: &str, windows: usize) -> String {
+    let first = label.chars().next().unwrap_or(' ');
+    format!(" {first}{windows}")
+}
+
 /// Lay out the **Taskbar** `bar` on `edge`.
 /// - Top or bottom: Start, then the buttons left to right with one gap column, wrapping to the
 ///   next row; the hint takes the rest of the last used row, or the next free row.
 /// - Left or right: Start on the first row, one button per row below it (cut to the width), the
-///   hint on the last row.
-pub(super) fn layout(bar: Rect, edge: Edge, texts: impl IntoIterator<Item = String>) -> Layout {
-    let start_width = text_width(START).min(bar.width);
+///   hint and the collapse toggle on the last row; a `collapsed` bar has only the toggle there.
+pub(super) fn layout(
+    bar: Rect,
+    edge: Edge,
+    collapsed: bool,
+    texts: impl IntoIterator<Item = String>,
+) -> Layout {
+    let collapsed = collapsed && edge.vertical();
+    let start_text = if collapsed { START_SHORT } else { START };
+    let start_width = text_width(start_text).min(bar.width);
     let start = Rect::new(bar.x, bar.y, start_width, bar.height.min(1));
     let mut buttons = Vec::new();
     if bar.is_empty() {
@@ -219,6 +260,7 @@ pub(super) fn layout(bar: Rect, edge: Edge, texts: impl IntoIterator<Item = Stri
             start,
             buttons,
             hint: None,
+            toggle: None,
         };
     }
     if edge.vertical() {
@@ -231,11 +273,23 @@ pub(super) fn layout(bar: Rect, edge: Edge, texts: impl IntoIterator<Item = Stri
                 text,
             });
         }
-        let hint = (last > bar.y).then(|| Rect::new(bar.x + 1, last, bar.width - 1, 1));
+        let has_last = last > bar.y;
+        // herdr's sidebar: `«` two columns from the right, `»` centred when collapsed.
+        let toggle = (has_last && bar.width > 1).then(|| {
+            let x = if collapsed {
+                bar.x + bar.width / 2
+            } else {
+                bar.right() - 2
+            };
+            Rect::new(x, last, 1, 1)
+        });
+        let hint = (has_last && !collapsed && bar.width > 3)
+            .then(|| Rect::new(bar.x + 1, last, bar.width - 3, 1));
         return Layout {
             start,
             buttons,
             hint,
+            toggle,
         };
     }
     let mut x = start.right() + 2;
@@ -266,6 +320,7 @@ pub(super) fn layout(bar: Rect, edge: Edge, texts: impl IntoIterator<Item = Stri
         start,
         buttons,
         hint,
+        toggle: None,
     }
 }
 
@@ -322,9 +377,14 @@ mod tests {
             (Edge::Left, 16),
             (Edge::Right, 30),
         ] {
-            let place = Place { edge, size }.sized(size, SCREEN);
+            let place = Place {
+                edge,
+                size,
+                collapsed: false,
+            }
+            .sized(size, SCREEN);
             let bar = place.bar(SCREEN);
-            let layout = layout(bar, edge, texts(30));
+            let layout = layout(bar, edge, false, texts(30));
             assert_eq!((layout.start.x, layout.start.y), (bar.x, bar.y), "{edge:?}");
             assert!(!layout.buttons.is_empty(), "{edge:?}");
             let mut rects = vec![layout.start];
@@ -341,12 +401,12 @@ mod tests {
 
     #[test]
     fn horizontal_buttons_wrap_and_vertical_ones_stack() {
-        let one = layout(Rect::new(0, 35, 120, 1), Edge::Bottom, texts(30));
+        let one = layout(Rect::new(0, 35, 120, 1), Edge::Bottom, false, texts(30));
         assert!(one.buttons.iter().all(|b| b.rect.y == 35));
-        let three = layout(Rect::new(0, 33, 120, 3), Edge::Bottom, texts(30));
+        let three = layout(Rect::new(0, 33, 120, 3), Edge::Bottom, false, texts(30));
         assert!(three.buttons.len() > one.buttons.len());
         assert_eq!(three.buttons.last().map(|b| b.rect.y), Some(35));
-        let side = layout(Rect::new(0, 0, 16, 36), Edge::Left, texts(5));
+        let side = layout(Rect::new(0, 0, 16, 36), Edge::Left, false, texts(5));
         let rows: Vec<u16> = side.buttons.iter().map(|b| b.rect.y).collect();
         assert_eq!(rows, [1, 2, 3, 4, 5]);
         assert!(side.buttons.iter().all(|b| b.rect.width <= 16));
@@ -370,6 +430,7 @@ mod tests {
         let top = Place {
             edge: Edge::Bottom,
             size: 3,
+            collapsed: false,
         }
         .moved(Edge::Top, SCREEN);
         assert_eq!(top.size, 3);
@@ -383,5 +444,36 @@ mod tests {
         assert_eq!(nearest_edge((117, 18), SCREEN), Edge::Right);
         // 10 columns from the left of 120 is nearer than 5 rows from the top of 36.
         assert_eq!(nearest_edge((10, 5), SCREEN), Edge::Left);
+    }
+
+    #[test]
+    fn a_collapsed_side_bar_is_narrow_with_a_toggle_and_keeps_its_size() {
+        let place = Place {
+            edge: Edge::Left,
+            size: 24,
+            collapsed: true,
+        };
+        assert_eq!(place.bar(SCREEN).width, COLLAPSED);
+        assert_eq!(place.desk(SCREEN).x, COLLAPSED);
+        assert!(place.grip(SCREEN).is_empty());
+        let bar = place.bar(SCREEN);
+        let side = layout(bar, Edge::Left, true, vec![task_short("Local", 4)]);
+        assert_eq!(side.buttons[0].text, " L4");
+        assert_eq!(side.hint, None);
+        assert_eq!(side.toggle.map(|t| (t.x, t.y)), Some((2, bar.bottom() - 1)));
+        let open = Place {
+            collapsed: false,
+            ..place
+        };
+        assert_eq!(open.bar(SCREEN).width, 24);
+        let wide = layout(open.bar(SCREEN), Edge::Left, false, texts(2));
+        assert_eq!(wide.toggle.map(|t| t.x), Some(22));
+        // Top and bottom bars ignore the flag.
+        let bottom = Place {
+            collapsed: true,
+            ..Place::default()
+        };
+        assert!(!bottom.is_collapsed());
+        assert_eq!(bottom.bar(SCREEN).height, ROWS.0);
     }
 }
