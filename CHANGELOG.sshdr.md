@@ -6,6 +6,10 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: desk follows server events instead of polling (B23): one `events.subscribe` stream per
+  Server, local over the API socket and remote over `ssh -W`; an idle desk starts no `herdr`
+  processes, a quiet Machine is pinged every 3 s.
+- feat: desk saves `desk.json` 1 s after the layout settles, so a killed desk keeps its layout.
 - feat: desk Machines Folder (B15): `▣ Machines` icon and Start Menu entry list Local and saved
   Machines with their Tier; Server Tier Machines add their Tasks and windows over SSH, SSH Tier
   opens an `ssh` window, Attention shows `! auth`; connected Machines reconnect on start.

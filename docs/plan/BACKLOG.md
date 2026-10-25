@@ -19,7 +19,6 @@ deleted. Evidence cites files and symbols, not line numbers.
 | B18 | P5 **App** model: herdr plugin manifest plus **Desktop** fields (icon, **Start Menu** entry, **File Associations**, window placement) | `src/api/schema/plugins.rs`; `src/app/api/plugins/`; ADR 0006 | 2026-10-24 | P2 | M | Sample **App** installs and launches from the **Start Menu**; depends on B14 |
 | B19 | Touch layout for the **Desktop** (tap = press + release; no drag, right-click, or long-press) | `~/repos/wens-tui-lab/src/mobile.rs`; tui-components contract C12; ADR 0006 | 2026-10-24 | P3 | L | Spec approved; after the first release |
 | B21 | Movable **Taskbar**: drag it to the top, bottom, left, or right edge; drag its inner border to change its height or width; position and size persist | Owner suggestion 2026-10-25; `~/repos/wens-tui-lab/src/desk.rs` (bottom bar only) | 2026-10-25 | P3 | M | Hit-map tests for each edge; pty-driven run; depends on B14 |
-| B23 | **Desktop** follow-ups from B14: save `desk.json` on change, not only on quit; replace the 1 s three-command poll with `events.subscribe` | `src/cli/desk/app.rs` `run`; `src/cli/desk/server.rs` `spawn_poller`; plan 2026-10-25 §8 | 2026-10-25 | P3 | S | Killing the desk keeps the last layout; idle desk spawns no CLI children |
 
 ## Pending verification
 
@@ -47,6 +46,7 @@ Deferred by ADR 0006 (2026-10-24); resume when **Fleet** and **Remote Backup** r
 
 | ID | Item | Commit |
 |---|---|---|
+| B23 | **Desktop** follows `events.subscribe` (local socket, remote `ssh -W`) instead of the 1 s poll, pings a quiet **Machine** every 3 s, and saves `desk.json` 1 s after the layout settles; plan `2026-10-25-b23-b21-b11-desk-followups.md` | docs: record b23 desk events |
 | B15 | P1 **Machines Folder**: desktop icon and Start Menu entry, list of Local and saved **Machines** with **Tier** status; **Server Tier** Tasks and windows over SSH (≤8 streams per ControlMaster, 5 s poll timeout, windows kept and reattached across disconnects); **SSH Tier** opens `ssh`; **Attention** shows `! auth`; connected **Machines** reconnect on start. Plan `2026-10-25-b15-machines-folder.md`, reference `docs/reference/desk.md` | docs: record b15 machines folder |
 | B22 | Spike: remote **Terminal Windows** over SSH on omarchy (herdr 0.9.5): works; limits found (sshd `MaxSessions` 10, windows lost on disconnect, no poll timeout); results `docs/audit/2026-10-25-b22-remote-desk-spike.md`, code on `spike/b22-remote-desk` | docs: record b22 remote desk spike results |
 | B14 | P1 **Desktop** shell: **Tasks** from workspaces, **Terminal Windows** on tab root panes, **Taskbar**, **Start Menu**, **Minimize**, right-click rename, saved layout; plan `2026-10-25-b14-desk-shell.md`, reference `docs/reference/desk.md` | docs: record b14 desk shell |

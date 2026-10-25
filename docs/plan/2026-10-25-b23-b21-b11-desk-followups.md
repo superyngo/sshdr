@@ -97,3 +97,40 @@ Owner 2026-10-25 說「都做」，指 B15 報告最後列的三項。順序：B
 4. **B11 什麼時候存**：
    - A（建議）：失敗時在互動式終端機詢問，另外加 `--ssh-only` 旗標。
    - B：只有加 `--ssh-only` 才存。
+
+## 7. 結果
+
+### B23（分支 `b23-desk-events`）
+
+| commit | 內容 |
+|---|---|
+| `50fb4144 feat: desk follows server events instead of polling` | 每個 target 一條 watcher 執行緒：`events.subscribe`，事件合併 100 ms 後 `session.snapshot`；本機走 socket，遠端走 `ssh -W` |
+| `b37aa902 feat: desk saves layout on change` | 版面停止變動 1 秒後寫 `desk.json`（暫存檔再改名） |
+
+與計畫不同的地方：
+- 不改 ControlMaster 的 `ServerAlive`：master 0 是 herdr 自己共用的，desk 不該改它的設定。改成遠端沒有事件時每 3 秒用 `ssh -W` 送一次 `ping`，3 秒內沒回應就是 `! offline`。卡住後約 7 秒內顯示。
+- 連線判斷改用 `herdr status server --json`，拿到 socket 路徑後，之後的讀取都經過 socket。遠端裝了 herdr、但 server 沒在跑時，仍然算 **SSH Tier**。
+- 視窗串流中斷時，desk 會主動要一次快照，靠快照決定原地重接或關閉；以前是等下一次輪詢。
+
+實測（`docs/tmp/claude-scratch/b23/`，本機 `desk-b15l`，遠端 `desk-b15`）：
+
+| 情境 | 結果 |
+|---|---|
+| desk 執行中，在遠端 `tab create` | 約 2 秒內出現 `omarchy: evt-remote` 視窗 |
+| desk 執行中，在本機 `workspace create` | **Taskbar** 出現 `evt-local` |
+| 閒置 6 秒、取 3 次子程序清單 | 只有視窗串流（`terminal session control` ×4、ssh ×2）和 omarchy 的事件串流（ssh ×1），三次完全相同 |
+| `kill -STOP` desk 的 master | 8 秒內顯示 `omarchy ! offline`、標題加 `⚠`；`CONT` 後 6 秒內恢復 |
+| 拖曳視窗後 2 秒 | `desk.json` 已更新 |
+| 最大化遠端視窗後 `kill -9` desk | `desk.json` 留下該視窗的 `restore`，沒有殘留暫存檔 |
+| **Machines Folder** 回歸 | smbnfs → `SSH` 並開出 `PS C:\Users\Admin>`；macmini → `! auth`；omarchy Disconnect 後重連，視窗回到原位 |
+
+測試中發現並修正一個錯誤：第一次連線成功後，watcher 仍把自己當成「第一次」，斷線時送出 `Connected(Err)` 就結束了，所以一直顯示 offline。改成送出 `Connected(Ok)` 之後就不再是第一次。
+
+效能（release，同機先後跑 `main` 和 B23，`desk_perf.py`，20 秒）：
+
+| 視窗數 | desk CPU main → B23 | 繪製平均 main → B23 |
+|---|---|---|
+| 1 | 2.8% → 1.8% | 0.289 → 0.286 ms |
+| 15 | 12.6% → 9.6% | 2.97 → 3.04 ms |
+
+desk CPU 下降，因為不再每秒開 3 個 CLI 子程序。繪製時間沒有可量測的差異。

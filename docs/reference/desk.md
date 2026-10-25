@@ -40,10 +40,13 @@ Ctrl+\ then: `n` new window · `w` close · `z` minimize · `m` maximize · `t` 
 
 ## Server state
 
-- Only public CLI commands are used: `workspace list|create|rename|close`,
-  `tab list|create|rename|close`, `pane list`, and one `terminal session control` child per window.
-- The desk polls the three lists every second, so workspaces and tabs created, renamed, or closed
-  by any other **Client** appear on the desk.
+- State is read over the public API socket: `session.snapshot` for **Tasks** and windows, and one
+  `events.subscribe` stream per **Server** (workspace created, renamed, closed; tab created,
+  closed, renamed, moved; pane created, closed). Each burst of events (100 ms) brings one new
+  snapshot, so changes made by any other **Client** appear on the desk. An idle desk starts no
+  `herdr` processes; only the ping of a connected **Machine** (below) runs `ssh -W` every 3 s.
+- Changes use public CLI commands: `workspace create|rename|close`, `tab create|rename|close`,
+  `pane run`; each window is one `terminal session control` child.
 - A window shows `TabInfo.root_pane_id` (optional field added by sshdr). Against a server without
   it, the first pane without a label is used. Other panes in the tab are not shown; the title
   says `(+N panes)`.
@@ -54,28 +57,32 @@ The **Machines Folder** lists Local and every enabled saved **Machine** (`herdr 
 read from the endpoint catalog, never written). Status per row: `Local`, `not connected`,
 `connecting…`, `Server` (with its window count), `SSH`, `! auth`, `! offline`.
 
-Connecting runs `herdr workspace list` on the **Machine** over SSH and detects the **Tier** each
-time (ADR 0004):
+Connecting runs `herdr status server --json` on the **Machine** over SSH, which reports its API
+socket, and detects the **Tier** each time (ADR 0004):
 
 | Result | Status | Effect |
 |---|---|---|
-| Lists returned | `Server` | its workspaces join the **Taskbar** as `<machine>: <task>`; its tabs open as windows titled `<machine>: <tab>`; polled every second like Local |
+| Server running | `Server` | its workspaces join the **Taskbar** as `<machine>: <task>`; its tabs open as windows titled `<machine>: <tab>`; followed by events like Local |
 | ssh exit 255 with an authentication or host-key error | `! auth` | nothing opens; no prompt (`BatchMode=yes`) |
 | other ssh exit 255, or no answer in 12 s | `! offline` | nothing opens |
-| ssh works, `herdr` fails or is missing | `SSH` | a local window runs `ssh <target>`, in a local **Task** named after the **Machine** |
+| ssh works, `herdr` is missing, fails, or its server is not running | `SSH` | a local window runs `ssh <target>`, in a local **Task** named after the **Machine** |
 
-Remote commands run as `env HERDR_SESSION=<profile session> herdr …` over the managed
-ControlMaster (`platform::shared_ssh_control_path`, the same socket herdr itself uses). Each master
+Remote commands run as `env HERDR_SESSION=<profile session> herdr …`, and API requests and the
+event stream as `ssh -W <socket>`, over the managed ControlMaster (`platform::shared_ssh_control_path`,
+the same socket herdr itself uses); no newer herdr is needed on the **Machine**. Each master
 carries at most 8 window streams; more windows open another master, started before its streams.
 
-A poll that fails or takes over 5 s marks the **Machine** `! offline` (shown in the **Taskbar**
-hint) and prefixes its window titles with `⚠`; windows keep their place. A window whose stream
-ends stays put and reattaches after the next successful poll; it closes only when its tab is gone.
-Disconnect stops polling and closes the **Machine**'s windows; its tabs keep running.
+A **Machine** without events for 3 s is pinged. A failed ping (3 s limit), snapshot (5 s), or a
+closed event stream marks it `! offline` (shown in the **Taskbar** hint, within about 7 s of a
+stall) and prefixes its window titles with `⚠`; windows keep their place, and the desk retries
+every 2 s. A window whose stream ends stays put and asks for a snapshot: it reattaches in place,
+or closes when its tab is gone. Disconnect stops following the **Machine** and closes its
+windows; its tabs keep running.
 
 ## Saved layout
 
-On quit the desk writes `desk.json` in the Session data directory (`crate::session::data_dir()`):
+The desk writes `desk.json` in the Session data directory (`crate::session::data_dir()`) once the
+layout has been unchanged for 1 s, and on quit (temporary file, then rename):
 per window the position, size, maximize state, minimize state, and stacking order, keyed by the
 terminal id (local) or `<profile id>/<terminal id>` (**Machine**), plus the **Machines** that were
 connected. The next start restores the layout and reconnects those **Machines**; a **Machine**'s
