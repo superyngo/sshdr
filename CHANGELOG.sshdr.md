@@ -13,6 +13,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   (root pane), and remote Server Tier tabs open as their own Windows over SSH (amends ADR 0006
   decisions 2 and 4); glossary adds Task and Minimize; backlog closes B20, updates B14 and B15,
   adds the B22 remote-stream spike.
+- docs: plan B14 desk shell: Tasks from workspaces, Windows from tab root panes, Taskbar,
+  Start Menu, Minimize, context-menu rename, and `desk.json` window state; adds optional
+  `root_pane_id` to `TabInfo`; Windows stays in V2.
 
 ### 2026-10-24
 
