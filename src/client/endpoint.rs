@@ -95,6 +95,9 @@ pub(crate) enum ClientEndpointStatus {
     Online,
     Reconnecting,
     Attention,
+    /// sshdr: SSH works but the host has no usable herdr **Server** (ADR 0004 **SSH Tier**);
+    /// not retried in the background.
+    SshTier,
     Disabled,
 }
 

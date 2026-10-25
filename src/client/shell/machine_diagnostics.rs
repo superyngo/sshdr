@@ -43,6 +43,7 @@ fn machine_retryable(endpoint: &ClientShellEndpoint) -> bool {
             ClientEndpointStatus::Connecting
                 | ClientEndpointStatus::Reconnecting
                 | ClientEndpointStatus::Attention
+                | ClientEndpointStatus::SshTier
         )
 }
 

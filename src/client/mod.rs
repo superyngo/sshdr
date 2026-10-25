@@ -1366,6 +1366,9 @@ async fn run_client_loop(
                     if status == endpoint::ClientEndpointStatus::Attention {
                         warn!(endpoint = %endpoint_id.storage_key(), generation, error = %message, "endpoint needs attention");
                     }
+                    if status == endpoint::ClientEndpointStatus::SshTier {
+                        info!(endpoint = %endpoint_id.storage_key(), generation, error = %message, "endpoint is ssh tier");
+                    }
                     present_endpoint_connection_failure(&mut state, &endpoint_id, status, message);
                 }
                 endpoint::EndpointSupervisorEvent::Connected {

@@ -179,6 +179,19 @@ pub(crate) fn saved_ssh_failure_needs_attention(error: &io::Error) -> bool {
     .any(|needle| message.contains(needle))
 }
 
+/// sshdr: SSH worked but the host has no usable herdr **Server** (ADR 0004 **SSH Tier**).
+pub(crate) fn saved_ssh_failure_is_ssh_tier(error: &io::Error) -> bool {
+    let message = error.to_string().to_ascii_lowercase();
+    [
+        "unsupported remote platform",
+        "matching herdr is not ready",
+        "remote server is not ready for saved machines",
+        "predates herdr's stable endpoint protocol",
+    ]
+    .iter()
+    .any(|needle| message.contains(needle))
+}
+
 fn saved_bridge_path(profile_id: &str) -> PathBuf {
     let pid = std::process::id();
     let readable = format!("herdr-ssh-{pid}-{profile_id}.sock");
@@ -227,6 +240,28 @@ mod tests {
             saved_ssh_bootstrap_command("build host", "agent work"),
             "herdr --remote 'build host' --session 'agent work'"
         );
+    }
+
+    #[test]
+    fn missing_or_unsupported_servers_are_ssh_tier() {
+        for message in [
+            "unsupported remote platform: Windows X86",
+            "matching Herdr is not ready on h; run `herdr --remote h` interactively to install or update it",
+            "remote server is not ready for saved machines",
+            "the remote server predates Herdr's stable endpoint protocol and must update",
+        ] {
+            assert!(saved_ssh_failure_is_ssh_tier(&io::Error::other(message)), "{message}");
+        }
+        for message in [
+            "Permission denied (publickey)",
+            "Host key verification failed",
+            "timed out",
+        ] {
+            assert!(
+                !saved_ssh_failure_is_ssh_tier(&io::Error::other(message)),
+                "{message}"
+            );
+        }
     }
 
     #[test]

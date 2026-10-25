@@ -208,6 +208,7 @@ fn mobile_endpoint_state(status: ClientEndpointStatus) -> &'static str {
         ClientEndpointStatus::Online => "online",
         ClientEndpointStatus::Reconnecting => "reconnecting",
         ClientEndpointStatus::Attention => "attention",
+        ClientEndpointStatus::SshTier => "ssh",
         ClientEndpointStatus::Disabled => "disabled",
     }
 }

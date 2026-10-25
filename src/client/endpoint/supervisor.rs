@@ -61,6 +61,8 @@ struct ReconnectState {
     generation: Option<u64>,
     ready_since: Option<Instant>,
     retry_after_resume: bool,
+    /// sshdr: last attempt found **SSH Tier**; waits for a manual retry or catalog reload.
+    ssh_tier: bool,
 }
 
 impl ReconnectState {
@@ -75,6 +77,7 @@ impl ReconnectState {
             generation: None,
             ready_since: None,
             retry_after_resume: false,
+            ssh_tier: false,
         }
     }
 }
@@ -173,6 +176,10 @@ impl EndpointSupervisors {
                 .entry(ClientEndpointId::Ssh(profile.id.clone()))
                 .or_insert_with(|| ReconnectState::new(ConnectTarget::Ssh(profile.clone()), now));
             state.target = ConnectTarget::Ssh(profile.clone());
+            // sshdr: a catalog reload detects the **Tier** again.
+            if state.ssh_tier && !state.in_flight {
+                state.next_attempt = Some(now);
+            }
         }
         retired
     }
@@ -234,12 +241,18 @@ impl EndpointSupervisors {
                     Ok(Err(error)) => EndpointSupervisorEvent::Status {
                         endpoint_id: task_endpoint_id,
                         generation,
-                        status: if failure_needs_attention(&error) {
+                        status: if crate::remote::saved_ssh_failure_is_ssh_tier(&error) {
+                            ClientEndpointStatus::SshTier
+                        } else if failure_needs_attention(&error) {
                             ClientEndpointStatus::Attention
                         } else {
                             ClientEndpointStatus::Reconnecting
                         },
-                        message: error.to_string(),
+                        message: if crate::remote::saved_ssh_failure_is_ssh_tier(&error) {
+                            format!("SSH only: {error}")
+                        } else {
+                            error.to_string()
+                        },
                     },
                     Err(error) => EndpointSupervisorEvent::Status {
                         endpoint_id: task_endpoint_id,
@@ -270,6 +283,7 @@ impl EndpointSupervisors {
         }
         state.in_flight = false;
         let retry_after_resume = std::mem::take(&mut state.retry_after_resume);
+        state.ssh_tier = status == ClientEndpointStatus::SshTier;
         match status {
             ClientEndpointStatus::Online => {
                 if endpoint_id.is_local() {
@@ -283,7 +297,8 @@ impl EndpointSupervisors {
                 state.next_attempt =
                     (!endpoint_id.is_local()).then_some(now + Duration::from_secs(30));
             }
-            ClientEndpointStatus::Disabled => {
+            // sshdr: ADR 0004 connects to **SSH Tier** hosts on demand only.
+            ClientEndpointStatus::SshTier | ClientEndpointStatus::Disabled => {
                 state.ready_since = None;
                 state.next_attempt = None;
             }
@@ -409,7 +424,7 @@ impl EndpointSupervisors {
         let Some(state) = self.endpoints.get_mut(endpoint_id) else {
             return false;
         };
-        if state.in_flight || state.next_attempt.is_none() {
+        if state.in_flight || (state.next_attempt.is_none() && !state.ssh_tier) {
             return false;
         }
         state.attempts = 0;
@@ -1194,5 +1209,25 @@ mod tests {
             supervisors.endpoints[&endpoint_id].next_attempt,
             Some(now + Duration::from_secs(30))
         );
+    }
+
+    #[test]
+    fn ssh_tier_waits_for_manual_retry_or_catalog_reload() {
+        let now = Instant::now();
+        let mut supervisors = EndpointSupervisors::new(&[profile()], now);
+        let endpoint_id = ClientEndpointId::Ssh(profile().id);
+        supervisors
+            .endpoints
+            .get_mut(&endpoint_id)
+            .unwrap()
+            .generation = Some(4);
+        assert!(supervisors.record_status(&endpoint_id, 4, ClientEndpointStatus::SshTier, now));
+        assert!(supervisors.endpoints[&endpoint_id].next_attempt.is_none());
+        assert!(supervisors.retry_now(&endpoint_id, now));
+        assert_eq!(supervisors.endpoints[&endpoint_id].next_attempt, Some(now));
+
+        assert!(supervisors.record_status(&endpoint_id, 4, ClientEndpointStatus::SshTier, now));
+        supervisors.reconcile_profiles(&[profile()], now);
+        assert_eq!(supervisors.endpoints[&endpoint_id].next_attempt, Some(now));
     }
 }

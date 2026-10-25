@@ -495,7 +495,12 @@ pub(super) fn present_endpoint_connection_failure(
         shell.set_endpoint_status(endpoint_id, status);
         shell.set_machine_diagnostic(endpoint_id, message.clone());
         let requested = shell.report_machine_retry(endpoint_id);
-        (active_failure && status == endpoint::ClientEndpointStatus::Attention && !requested)
+        (active_failure
+            && matches!(
+                status,
+                endpoint::ClientEndpointStatus::Attention | endpoint::ClientEndpointStatus::SshTier
+            )
+            && !requested)
             .then(|| format!("{}: {message}", shell.endpoint_label(endpoint_id)))
     });
     if let Some(message) = unavailable {
