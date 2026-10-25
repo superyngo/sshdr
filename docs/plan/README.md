@@ -9,7 +9,7 @@ The living backlog is [BACKLOG.md](BACKLOG.md) — undated, never frozen while w
 
 | Date | Document | Status |
 |---|---|---|
-| 2026-10-25 | [B12 Client 區分 Attention 與 SSH Tier](2026-10-25-b12-client-ssh-tier.md) | Draft |
+| 2026-10-25 | [B12 Client 區分 Attention 與 SSH Tier](2026-10-25-b12-client-ssh-tier.md) | Approved |
 
 ## Landed
 

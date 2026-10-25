@@ -1,6 +1,6 @@
 # B12：herdr Client 區分 Attention 與 SSH Tier
 
-Status: Decided（owner 2026-10-25：三項都選 A，等開工確認）
+Status: Approved（owner 2026-10-25：三項都選 A）
 Backlog: B12（P1, M）。依據：ADR 0004 決定 2、4。
 
 ## 1. 現況
