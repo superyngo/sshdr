@@ -27,6 +27,7 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 | Tab strip: `×` after a tab | click | close the tab (`tab close`); the last tab closes the window |
 | Tab strip: `+` | click | new tab (`tab create`), shown at once |
 | Pane | click | focus it (`pane.focus`) and pass the click on |
+| Divider between panes | drag | resize the split (`layout.set_split_ratio`, ratio 0.1–0.9) |
 | Border | drag | resize |
 | Content | any | forwarded to the pane under the pointer |
 | `⊞ Start` | click | **Start Menu**: Machines (the **Machines Folder**), Tile all, Quit desk |
@@ -66,7 +67,9 @@ Ctrl+\ then: `n` new window (workspace) in the focused window's **Task** · `w` 
 - A window shows the workspace's `active_tab_id`. The tab's panes come from its `layouts` entry:
   their rects are scaled from the **Server**'s layout area into the window, with one cell between
   neighbours for a divider; a zoomed tab shows only its focused pane. Keys go to the layout's
-  `focused_pane_id`. Without a layout entry the tab shows its root pane (`TabInfo.root_pane_id`,
+  `focused_pane_id`. Dragging a divider sends `layout.set_split_ratio` for the split under it
+  (its path from the `splits` id) every 33 ms and on release, off the UI thread with one call in
+  flight; the `layout_updated` event redraws the panes. Without a layout entry the tab shows its root pane (`TabInfo.root_pane_id`,
   an optional field added by sshdr; against a server without it, the first pane without a label).
   Dividers cannot be dragged.
 

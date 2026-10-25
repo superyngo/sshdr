@@ -6,6 +6,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: desk drags pane dividers to resize splits (B28): `layout.set_split_ratio`, sent every
+  33 ms and on release off the UI thread, on Local and remote **Machines**.
 - feat: desk start menu drops new window (`Ctrl+\ n` stays).
 - feat: desk machine menus are the same for server and ssh: Connect when not connected; Show
   windows, New window, Disconnect when connected, whichever tier; Open ssh window is gone;
