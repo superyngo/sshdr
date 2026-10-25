@@ -3,11 +3,13 @@
 //! ADR 0006/0007 (`docs/adr/`); plan `docs/plan/2026-10-25-b14-desk-shell.md`.
 
 mod app;
-mod session;
+mod server;
+mod stream;
+mod taskbar;
 mod wm;
 
 const USAGE: &str = "usage: herdr desk\n\n\
-Open the sshdr desktop: terminal windows over panes in the `desk` workspace.\n\
+Open the sshdr desktop: every workspace is a Task, every tab a window (its root pane).\n\
 Ctrl+\\ then: n new · w close · m maximize · t tile · Tab next · q quit (panes stay).";
 
 pub(super) fn run_desk_command(args: &[String]) -> std::io::Result<i32> {

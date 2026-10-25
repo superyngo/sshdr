@@ -1056,6 +1056,13 @@
               "minimum": 0,
               "type": "integer"
             },
+            "root_pane_id": {
+              "description": "sshdr: the tab's root pane; absent from older servers.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "tab_id": {
               "type": "string"
             },
@@ -10554,6 +10561,13 @@
               "format": "uint",
               "minimum": 0,
               "type": "integer"
+            },
+            "root_pane_id": {
+              "description": "sshdr: the tab's root pane; absent from older servers.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "tab_id": {
               "type": "string"

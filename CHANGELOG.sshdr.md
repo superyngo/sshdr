@@ -19,6 +19,10 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 - feat: `herdr desk` client from the B13 spike lands on branch `b14-desk-shell`: overlapping
   terminal windows over `terminal session control` streams; Windows VT console input moves to
   `crate::platform::enable_virtual_terminal_input`.
+- feat: desk Tasks and windows come from the server: every workspace is a Task on the Taskbar
+  (label and window count, click raises its top window), every tab a window on its root pane
+  (title notes extra panes); a 1 s poll follows tabs created, renamed, or closed elsewhere.
+  `TabInfo` gains optional `root_pane_id` (API schema regenerated).
 
 ### 2026-10-24
 

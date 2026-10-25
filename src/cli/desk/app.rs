@@ -15,7 +15,9 @@ use ratatui::{
     Frame, Terminal,
 };
 
-use super::session::{self, DeskEvent, DeskPane, Session};
+use super::server::{self, Snapshot, TaskInfo, WindowInfo};
+use super::stream::{DeskEvent, Session};
+use super::taskbar;
 use super::wm::{self, Desk, Edges, HitMap, WinId, WinState};
 use crate::pane::desk_mirror::DeskMirror as Mirror;
 use crate::raw_input::{parse_sgr_mouse_report, RawInputByteFramer};
@@ -44,6 +46,7 @@ enum Hit {
     NewWindow,
     TileAll,
     Quit,
+    Task(usize),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,7 +65,8 @@ struct Drag {
 }
 
 struct WinData {
-    pane: DeskPane,
+    info: WindowInfo,
+    attached_at: Instant,
     session: Session,
     mirror: Mirror,
     sent_size: (u16, u16),
@@ -78,7 +82,7 @@ struct Stats {
 }
 
 struct App {
-    workspace_id: String,
+    tasks: Vec<TaskInfo>,
     events: Sender<DeskEvent>,
     desk: Desk,
     data: HashMap<WinId, WinData>,
@@ -107,16 +111,16 @@ impl App {
         desk_area(self.screen)
     }
 
-    fn attach(&mut self, pane: DeskPane, rect: Option<Rect>) -> io::Result<WinId> {
+    fn attach(&mut self, info: WindowInfo, rect: Option<Rect>) -> io::Result<WinId> {
         let desk = self.desk_rect();
-        let id = self.desk.open(pane.title.clone(), NEW_WINDOW_SIZE, desk);
+        let id = self.desk.open(window_title(&info), NEW_WINDOW_SIZE, desk);
         if let (Some(rect), Some(w)) = (rect, self.desk.get_mut(id)) {
             w.rect = wm::fit(rect, desk);
         }
         let inner = self.desk.get(id).map(|w| w.inner()).unwrap_or_default();
         let size = (inner.width.max(1), inner.height.max(1));
         let started = Mirror::new(size.0, size.1).and_then(|mirror| {
-            Session::spawn(id, &pane.terminal_id, size.0, size.1, self.events.clone())
+            Session::spawn(id, &info.terminal_id, size.0, size.1, self.events.clone())
                 .map(|session| (mirror, session))
         });
         match started {
@@ -124,7 +128,8 @@ impl App {
                 self.data.insert(
                     id,
                     WinData {
-                        pane,
+                        info,
+                        attached_at: Instant::now(),
                         session,
                         mirror,
                         sent_size: size,
@@ -139,11 +144,93 @@ impl App {
         }
     }
 
+    fn win_id(&self, tab_id: &str) -> Option<WinId> {
+        self.data
+            .iter()
+            .find(|(_, data)| data.info.tab_id == tab_id)
+            .map(|(id, _)| *id)
+    }
+
+    /// The focused window's **Task**, else the first one.
+    fn current_task(&self) -> Option<String> {
+        self.desk
+            .focus
+            .and_then(|id| self.data.get(&id))
+            .map(|data| data.info.workspace_id.clone())
+            .or_else(|| self.tasks.first().map(|t| t.workspace_id.clone()))
+    }
+
+    /// New window in the current **Task**; creates a **Task** when there is none.
     fn new_window(&mut self) {
-        let created =
-            session::create_pane(&self.workspace_id).and_then(|pane| self.attach(pane, None));
-        if let Err(err) = created {
+        let created = match self.current_task() {
+            Some(workspace_id) => server::create_window(&workspace_id),
+            None => server::create_task().map(|(task, window)| {
+                self.tasks.push(task);
+                window
+            }),
+        };
+        if let Err(err) = created.and_then(|info| self.attach(info, None)) {
             self.notice = Some(format!("new window failed: {err}"));
+        }
+    }
+
+    /// Raise the topmost window of a **Task**.
+    fn raise_task(&mut self, workspace_id: &str) {
+        let top = self.desk.windows.iter().rev().find(|w| {
+            self.data
+                .get(&w.id)
+                .is_some_and(|data| data.info.workspace_id == workspace_id)
+        });
+        if let Some(id) = top.map(|w| w.id) {
+            self.desk.raise(id);
+        }
+    }
+
+    /// Reconcile windows with server state: new tabs open, closed tabs go, labels follow.
+    fn apply(&mut self, snap: Snapshot) {
+        self.tasks = snap.tasks;
+        for info in snap.windows.iter().cloned() {
+            match self.win_id(&info.tab_id) {
+                Some(id) if self.data[&id].info.terminal_id == info.terminal_id => {
+                    if let Some(w) = self.desk.get_mut(id) {
+                        w.title = window_title(&info);
+                    }
+                    if let Some(data) = self.data.get_mut(&id) {
+                        data.info = info;
+                    }
+                }
+                found => {
+                    let rect = found.and_then(|id| self.desk.get(id).map(|w| w.rect));
+                    if let Some(id) = found {
+                        self.drop_window(id);
+                    }
+                    if let Err(err) = self.attach(info, rect) {
+                        self.notice = Some(format!("open window failed: {err}"));
+                    }
+                }
+            }
+        }
+        // A snapshot taken before a window was created must not drop it.
+        let grace = server::POLL_INTERVAL * 2;
+        let gone: Vec<WinId> = self
+            .data
+            .iter()
+            .filter(|(_, data)| {
+                data.attached_at.elapsed() > grace
+                    && !snap.windows.iter().any(|w| w.tab_id == data.info.tab_id)
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for id in gone {
+            self.drop_window(id);
+        }
+    }
+
+    /// Remove a window from the desk; its tab stays on the server.
+    fn drop_window(&mut self, id: WinId) {
+        self.desk.close(id);
+        if let Some(data) = self.data.remove(&id) {
+            data.session.release();
         }
     }
 
@@ -151,7 +238,7 @@ impl App {
         self.desk.close(id);
         if let Some(data) = self.data.remove(&id) {
             data.session.release();
-            session::close_pane(&data.pane.pane_id);
+            server::close_window(&data.info.tab_id);
         }
     }
 
@@ -191,13 +278,9 @@ impl App {
                     data.mirror.feed(width, height, &bytes);
                 }
             }
-            DeskEvent::Closed(win) => {
-                // The pane exited (or the stream ended): drop the window, keep the pane alone.
-                self.desk.close(win);
-                if let Some(data) = self.data.remove(&win) {
-                    data.session.release();
-                }
-            }
+            // The pane exited (or the stream ended): drop the window, keep the tab alone.
+            DeskEvent::Closed(win) => self.drop_window(win),
+            DeskEvent::Snapshot(snap) => self.apply(snap),
         }
     }
 
@@ -334,6 +417,11 @@ impl App {
                         self.sync_sizes();
                     }
                     (Some(Hit::Quit), MouseButton::Left) => self.quit = true,
+                    (Some(Hit::Task(index)), MouseButton::Left) => {
+                        if let Some(task) = self.tasks.get(index).map(|t| t.workspace_id.clone()) {
+                            self.raise_task(&task);
+                        }
+                    }
                     _ => {}
                 }
             }
@@ -486,6 +574,32 @@ impl App {
                 hits.push(Rect::new(x, bar.y, width, 1), hit);
                 x += width + 1;
             }
+            let current = self.current_task();
+            let texts = self.tasks.iter().map(|task| {
+                let count = self
+                    .data
+                    .values()
+                    .filter(|data| data.info.workspace_id == task.workspace_id)
+                    .count();
+                taskbar::task_text(&task.label, count)
+            });
+            let buttons = taskbar::layout(x + 1, bar.right(), texts.collect::<Vec<_>>());
+            for (index, button) in buttons.iter().enumerate() {
+                let active = current.as_deref() == Some(self.tasks[index].workspace_id.as_str());
+                let style = if active {
+                    Style::default().bg(FOCUS_BORDER).fg(Color::Black)
+                } else {
+                    Style::default().bg(Color::Indexed(239)).fg(Color::White)
+                };
+                buf.set_string(button.x, bar.y, &button.text, style);
+                hits.push(
+                    Rect::new(button.x, bar.y, button.width, 1),
+                    Hit::Task(index),
+                );
+            }
+            if let Some(last) = buttons.last() {
+                x = last.x + last.width;
+            }
             let hint = match (&self.notice, self.prefix_armed) {
                 (_, true) => {
                     "desk: n new · w close · m max · t tile · Tab next · q quit".to_string()
@@ -502,6 +616,13 @@ impl App {
             );
         }
         self.hits = hits;
+    }
+}
+
+fn window_title(info: &WindowInfo) -> String {
+    match info.other_panes {
+        0 => info.label.clone(),
+        n => format!("{} (+{n} panes)", info.label),
     }
 }
 
@@ -571,7 +692,7 @@ fn spawn_stdin_reader(events: Sender<DeskEvent>) {
 }
 
 pub(super) fn run() -> io::Result<i32> {
-    let (workspace_id, panes) = match session::ensure_workspace() {
+    let snap = match server::snapshot() {
         Ok(found) => found,
         Err(err) => {
             eprintln!("herdr desk: {err}");
@@ -584,7 +705,7 @@ pub(super) fn run() -> io::Result<i32> {
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     let size = terminal.size()?;
     let mut app = App {
-        workspace_id,
+        tasks: Vec::new(),
         events: tx.clone(),
         desk: Desk::default(),
         data: HashMap::new(),
@@ -598,12 +719,8 @@ pub(super) fn run() -> io::Result<i32> {
         notice: None,
         stats: Stats::default(),
     };
-    let reattached = panes.len();
-    for pane in panes {
-        if let Err(err) = app.attach(pane, None) {
-            app.notice = Some(format!("reattach failed: {err}"));
-        }
-    }
+    let reattached = snap.windows.len();
+    app.apply(snap);
     if reattached > 1 {
         app.desk.tile_all(app.desk_rect());
         app.sync_sizes();
@@ -611,6 +728,7 @@ pub(super) fn run() -> io::Result<i32> {
     if app.desk.windows.is_empty() {
         app.new_window();
     }
+    server::spawn_poller(tx.clone());
     spawn_stdin_reader(tx);
     let result = event_loop(&mut app, &mut terminal, &rx);
     for (_, data) in app.data.drain() {

@@ -1,6 +1,5 @@
-//! Server side of a desk window: the pane lives in the local server's `desk` workspace and is
-//! driven through a `herdr terminal session control` child process (JSON lines). Only public
-//! CLI surfaces are used, so this module stays out of upstream internals.
+//! Stream of one desk window: a `herdr terminal session control` child process (JSON lines)
+//! driving the window's pane. Only public CLI surfaces are used.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Command, Stdio};
@@ -11,8 +10,6 @@ use serde_json::{json, Value};
 
 use super::wm::WinId;
 
-pub(super) const DESK_WORKSPACE_LABEL: &str = "desk";
-
 pub(super) enum DeskEvent {
     Input(Vec<u8>),
     Frame {
@@ -22,104 +19,8 @@ pub(super) enum DeskEvent {
         bytes: Vec<u8>,
     },
     Closed(WinId),
-}
-
-/// A pane in the desk workspace.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct DeskPane {
-    pub pane_id: String,
-    pub terminal_id: String,
-    pub title: String,
-}
-
-fn herdr_json(args: &[&str]) -> io::Result<Value> {
-    let exe = std::env::current_exe()?;
-    let output = Command::new(exe).args(args).stdin(Stdio::null()).output()?;
-    if !output.status.success() {
-        return Err(io::Error::other(format!(
-            "herdr {}: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&output.stderr).trim()
-        )));
-    }
-    serde_json::from_slice(&output.stdout)
-        .map_err(|err| io::Error::other(format!("herdr {}: {err}", args.join(" "))))
-}
-
-fn result(value: &Value) -> &Value {
-    value.get("result").unwrap_or(value)
-}
-
-fn pane_from(info: &Value) -> Option<DeskPane> {
-    let pane_id = info.get("pane_id")?.as_str()?.to_string();
-    let terminal_id = info.get("terminal_id")?.as_str()?.to_string();
-    let title = info
-        .get("cwd")
-        .and_then(Value::as_str)
-        .and_then(|cwd| std::path::Path::new(cwd).file_name())
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| pane_id.clone());
-    Some(DeskPane {
-        pane_id,
-        terminal_id,
-        title,
-    })
-}
-
-/// Find or create the `desk` workspace; returns its id and the panes already in it.
-pub(super) fn ensure_workspace() -> io::Result<(String, Vec<DeskPane>)> {
-    let list = herdr_json(&["workspace", "list"])?;
-    let existing = result(&list)
-        .get("workspaces")
-        .and_then(Value::as_array)
-        .and_then(|workspaces| {
-            workspaces
-                .iter()
-                .find(|w| w.get("label").and_then(Value::as_str) == Some(DESK_WORKSPACE_LABEL))
-        })
-        .and_then(|w| w.get("workspace_id")?.as_str().map(str::to_string));
-    if let Some(workspace_id) = existing {
-        let panes = herdr_json(&["pane", "list", "--workspace", &workspace_id])?;
-        let panes = result(&panes)
-            .get("panes")
-            .and_then(Value::as_array)
-            .map(|panes| panes.iter().filter_map(pane_from).collect())
-            .unwrap_or_default();
-        return Ok((workspace_id, panes));
-    }
-    let created = herdr_json(&[
-        "workspace",
-        "create",
-        "--label",
-        DESK_WORKSPACE_LABEL,
-        "--no-focus",
-    ])?;
-    let created = result(&created);
-    let workspace_id = created
-        .pointer("/workspace/workspace_id")
-        .and_then(Value::as_str)
-        .ok_or_else(|| io::Error::other("workspace create: missing workspace_id"))?
-        .to_string();
-    let panes = created
-        .get("root_pane")
-        .and_then(pane_from)
-        .into_iter()
-        .collect();
-    Ok((workspace_id, panes))
-}
-
-pub(super) fn create_pane(workspace_id: &str) -> io::Result<DeskPane> {
-    let created = herdr_json(&["tab", "create", "--workspace", workspace_id, "--no-focus"])?;
-    result(&created)
-        .get("root_pane")
-        .and_then(pane_from)
-        .ok_or_else(|| io::Error::other("tab create: missing root_pane"))
-}
-
-pub(super) fn close_pane(pane_id: &str) {
-    if let Err(err) = herdr_json(&["pane", "close", pane_id]) {
-        tracing::warn!(%err, pane_id, "desk: pane close failed");
-    }
+    /// Periodic server state (`server::poll`).
+    Snapshot(super::server::Snapshot),
 }
 
 /// One `terminal session control` child streaming one pane.
