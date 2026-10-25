@@ -7,14 +7,13 @@ The living backlog is [BACKLOG.md](BACKLOG.md) — undated, never frozen while w
 
 ## In progress
 
-| Date | Document | Status |
-|---|---|---|
-| 2026-10-25 | [B24、B25 Desktop 階層調整](2026-10-25-b24-b25-desk-hierarchy.md) | Approved |
+None.
 
 ## Landed
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-10-25 | [B24、B25 Desktop 階層調整](2026-10-25-b24-b25-desk-hierarchy.md) | Landed |
 | 2026-10-25 | [B12 Client 區分 Attention 與 SSH Tier](2026-10-25-b12-client-ssh-tier.md) | Landed |
 | 2026-10-25 | [B23、B21、B11 Desktop 後續計畫](2026-10-25-b23-b21-b11-desk-followups.md) | Landed |
 | 2026-10-25 | [B15 Machines Folder 計畫](2026-10-25-b15-machines-folder.md) | Landed |

@@ -16,9 +16,8 @@ deleted. Evidence cites files and symbols, not line numbers.
 | B17 | P4 remote file manager: SSH file layer over the managed OpenSSH config (a subset of sshi `cp`), copy between **Machines**, progress, conflicts, cancel; Windows hosts | `src/remote/attach.rs` `RemoteSsh`, `write_managed_ssh_config`; `~/repos/sshi`; ADR 0004, 0006 | 2026-10-24 | P1 | L | Verified against real remote **Machines**; depends on B16 |
 | B18 | P5 **App** model: herdr plugin manifest plus **Desktop** fields (icon, **Start Menu** entry, **File Associations**, window placement) | `src/api/schema/plugins.rs`; `src/app/api/plugins/`; ADR 0006 | 2026-10-24 | P2 | M | Sample **App** installs and launches from the **Start Menu**; depends on B14 |
 | B19 | Touch layout for the **Desktop** (tap = press + release; no drag, right-click, or long-press) | `~/repos/wens-tui-lab/src/mobile.rs`; tui-components contract C12; ADR 0006 | 2026-10-24 | P3 | L | Spec approved; after the first release |
-| B24 | Drop the `▣ Machines` desktop icon; the **Machines Folder** stays in the **Start Menu** | `src/cli/desk/app.rs` `Hit::Icon`; `folder::render_icon` | 2026-10-25 | P2 | S | No icon on the desk; Start → Machines still opens the folder |
-| B25 | Re-map the **Desktop** to herdr's hierarchy: **Window** = workspace with a tab strip, **Task** = **Machine** (named by its label, not renamable); amends ADR 0007 | `src/cli/desk/app.rs`, `state.rs`, `taskbar.rs`; plan `2026-10-25-b24-b25-desk-hierarchy.md` | 2026-10-25 | P1 | L | One **Taskbar** button per **Machine**; each window is a workspace whose tabs switch inside it |
-| B26 | Show a tab's split panes inside its **Window** as herdr lays them out (`layouts[]` ratios), one stream per pane, click to focus (`pane focus`); divider dragging later | `src/cli/desk/app.rs`; `src/api/schema/panes.rs` `PaneLayoutSnapshot`; plan `2026-10-25-b24-b25-desk-hierarchy.md` | 2026-10-25 | P1 | M | A split tab shows every pane in its window; typing goes to the focused pane |
+| B27 | Decide where **Native Windows** (the **Machines Folder**, later **Apps**) belong on the **Taskbar**; the owner is considering treating a **Machine**'s **Task** as one **App** | ADR 0008 Consequences; `src/cli/desk/app.rs` `task_keys` | 2026-10-25 | P2 | S | A decision recorded (ADR or plan) |
+| B28 | Drag a divider between panes in a **Terminal Window** to change the split ratio (`layout.set_split_ratio`) | `src/cli/desk/app.rs` `layout_rects`, `draw_dividers` | 2026-10-25 | P3 | M | Dragging a divider resizes both panes on the **Server** |
 
 ## Pending verification
 
@@ -46,6 +45,9 @@ Deferred by ADR 0006 (2026-10-24); resume when **Fleet** and **Remote Backup** r
 
 | ID | Item | Commit |
 |---|---|---|
+| B24 | Dropped the `▣ Machines` desktop icon; the **Machines Folder** opens from the **Start Menu** | feat: desk drops the machines desktop icon |
+| B25 | **Desktop** re-mapped to herdr's hierarchy (ADR 0008): **Task** = **Machine**, **Terminal Window** = workspace with a tab strip (`tab focus`, `+`, `×`, rename), `[×]` closes the workspace; plan `2026-10-25-b24-b25-desk-hierarchy.md` | feat: desk windows are workspaces and tasks are machines |
+| B26 | A tab's split panes show inside its window as the **Server** lays them out; click focuses a pane (`pane.focus`); dividers not draggable yet | feat: desk shows split panes inside a tab |
 | B12 | herdr **Client** marks hosts where SSH works but no usable **Server** exists as `SshTier` (`○ ssh`, grey), retried only on demand; **Attention** keeps auth/host-key failures; plan `2026-10-25-b12-client-ssh-tier.md` | docs: record b12 client ssh tier |
 | B11 | `machine add --ssh-only` saves hosts without herdr setup to sshdr's `client/ssh-machines.json` (herdr clients never connect to them); a failed setup with working SSH suggests it; `list`/`rename`/`remove` and the **Machines Folder** include them, **Tier** still detected on connect; plan `2026-10-25-b23-b21-b11-desk-followups.md` | docs: record b11 ssh-only machines |
 | B21 | Movable **Taskbar**: drag its empty space to any screen edge or use its right-click menu; drag the thin line beside it (or Larger/Smaller) for 1–4 rows or 12–40 columns; saved as `taskbar` in `desk.json`; plan `2026-10-25-b23-b21-b11-desk-followups.md` | docs: record b21 movable taskbar |

@@ -1,6 +1,6 @@
 # B24、B25：刪除桌面 Machines 圖示；Window = workspace、Task = Machine
 
-Status: Approved（owner 2026-10-25，見 §6）
+Status: Landed（owner 2026-10-25，見 §6、§7）
 Amends（核准後）：ADR 0007 決定 1、2、4，新 ADR 0008。
 
 ## 1. 需求（owner 2026-10-25）
@@ -92,3 +92,40 @@ Amends（核准後）：ADR 0007 決定 1、2、4，新 ADR 0008。
 | B25 | ADR 0008；Task = Machine；Window = workspace，tab 頁籤（`tab focus` 同步、`+` 新 tab、`×` 關 tab、右鍵 Rename）；`[×]` 關 workspace；存檔 key 改 workspace；這一批 tab 內容先只顯示 root pane | `docs: adr 0008 desk windows are workspaces and tasks are machines`、`feat: desk tasks are machines`、`feat: desk windows are workspaces with tabs` |
 | B26 | tab 內照 split 版面顯示所有 pane，pane 間畫分隔線，點 pane 同步 `pane focus`，鍵盤輸入送到 focused pane；這一批不支援拖曳分隔線改比例 | `feat: desk shows split panes inside a tab` |
 | 文件 | desk.md、glossary（**Task**、**Terminal Window**、**Desktop**）、CHANGELOG、BACKLOG | `docs: record b24 b25 b26 desk hierarchy` |
+
+## 7. 結果
+
+| commit | 內容 |
+|---|---|
+| `6b7f421a` | B24：刪除 `Hit::Icon`、`folder::render_icon` |
+| `3194389b` | ADR 0008 |
+| `dced6625` | B25：`WinData` 改成一個 workspace（tabs、shown tab、`panes`）；Taskbar 按鈕＝`task_keys()`；tab 頁籤 `render_tabs`；`[×]` 關 workspace（多 tab 先確認）；`desk.json` 改用 workspace key，新增 `ssh_workspaces` |
+| `c51acb41` | B26：`server::build_snapshot` 讀 `layouts`；`layout_rects` 依比例縮放、留一格分隔線；每個 pane 一條 stream；`DeskEvent::Frame` 帶 serial；點 pane → `pane.focus` |
+
+與計畫不同的地方：
+- B25 計畫拆兩個 feat commit（tasks are machines、windows are workspaces），兩者共用同一個資料模型，實作時合成一個 commit。
+- **SSH Tier** 的 `ssh` 視窗歸屬記在 `desk.json` 的 `ssh_workspaces`，沒有用 workspace metadata token：herdr 的 token 是「display-only」，會顯示在 herdr 的 UI 上，而且不保證保存。
+- 遠端視窗標題保留 `<machine>: ` 字首，不同 Machine 的同名 workspace 才分得出來；Taskbar 按鈕已經不帶字首。
+- 每個視窗新增 tab 時，`ssh` 視窗的新 tab 也會跑 `ssh`。
+- 點 pane 用 API `pane.focus`：CLI 的 `pane focus` 只能依方向移動。
+- 新 tab（`tab create`）與沒有 `layouts` 項目的 tab 先只顯示 root pane，下一個 snapshot 會補上版面。
+- 沒有做效能量測（AGENTS.md 的 1 與 15 個 pane 對照）。draw 迴圈每個視窗多一次 `layout_rects`（每個 pane 幾次整數運算）；stream 數量隨 pane 數增加，這是需求本身。
+
+實測（`desk-b15l` 本機、`desk-b15` 遠端，pty 140×40）：
+
+| 情境 | 結果 |
+|---|---|
+| 啟動 | Taskbar：`Local ·4   omarchy ·1`；每個 workspace 一個視窗，標題下是 tab 頁籤（`1 ×  2 ×  3 ×  +`） |
+| 點遠端 `evt-remote` 頁籤 | 內容換成該 tab（`TAB-TWO-MARK`）；遠端 `tab list` 的 focused 跟著變 |
+| 從外部 `herdr tab focus w1:t1` | desk 視窗內容換回 `TAB-ONE-MARK` |
+| 點 `+` | 遠端多一個 tab `3` 並顯示；點它的 `×` 關掉，tab 回到兩個 |
+| tab 右鍵 | Rename tab…、Close tab |
+| `^\ n`（焦點在 omarchy 視窗） | 在 omarchy 建 workspace，按鈕變 `omarchy ·2` |
+| 兩個 tab 的視窗按 `^\ w` | 問 `Close ~ and its 2 tabs?`，Enter 後遠端 workspace 消失 |
+| Machines Folder 雙擊 `smbnfs-only` | 判斷為 SSH，開本機 workspace `smbnfs-only`（`PS C:\Users\Admin>`），Taskbar 多一顆 `smbnfs-only ·1`；重開 desk 後仍歸在該按鈕 |
+| `ssh` 視窗點 `+` | 新 tab 也是 `PS C:\Users\Admin>`；關閉視窗先確認，按鈕消失 |
+| 本機三格 split（右、左上 0.3） | 視窗內照版面顯示 `PANE-P1`/`PANE-P2`/`PANE-P3` 與分隔線 |
+| 點右邊 pane 後打字 | server 的 `focused_pane_id` 變成 `w3:p2`，`echo typed-into-p2` 只出現在右邊 |
+| 遠端執行 `pane split` | 約 4 秒內 desk 視窗變成上下兩格，再 split 變三格 |
+
+單元測試：`tab_strip_lists_tabs_with_close_marks_then_new_tab`、`layouts_scale_into_the_window_with_dividers`、`layouts_give_tabs_their_panes_and_zoom_keeps_the_focused_one`、`entries_keyed_by_terminal_id_load_without_a_key`。

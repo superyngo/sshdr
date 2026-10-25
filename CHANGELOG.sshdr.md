@@ -6,6 +6,13 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: desk drops the machines desktop icon (B24); the Machines Folder opens from Start.
+- feat: desk windows are workspaces and tasks are machines (B25, ADR 0008): one Taskbar button
+  per machine; each window is a workspace with a tab strip (click shows a tab for every client,
+  `+` adds one, `×` closes one); `[×]` closes the workspace after asking when it has several tabs.
+  Window positions saved by earlier builds are not reused.
+- feat: desk shows split panes inside a tab (B26) as the server lays them out; clicking a pane
+  focuses it.
 - feat: client shows ssh tier machines without retrying (B12): hosts where SSH works but no
   usable herdr server exists show a grey `○ ssh` and reconnect only on a click, catalog reload,
   or restart; auth and host-key failures stay `! error`.

@@ -82,11 +82,12 @@ _Avoid_: widget library, UI framework.
 ## Desktop
 
 Decided in [ADR 0006](../adr/0006-tui-desktop-as-separate-client.md) and
-[ADR 0007](../adr/0007-desktop-tasks-are-workspaces.md).
+[ADR 0007](../adr/0007-desktop-tasks-are-workspaces.md), amended by
+[ADR 0008](../adr/0008-desktop-windows-are-workspaces.md).
 
 **Desktop**:
 The sshdr **Client** started with `herdr desk`: overlapping **Windows**, a **Taskbar**, a **Start
-Menu**, and desktop icons, beside the default herdr shell **Client**.
+Menu**, and **Native Windows**, beside the default herdr shell **Client**.
 _Avoid_: desk mode, WM, workspace (for this concept).
 
 **Window**:
@@ -100,8 +101,9 @@ take part in drag-and-drop and the **File Clipboard**.
 _Avoid_: built-in app.
 
 **Terminal Window**:
-A **Window** showing one tab of a **Server**, local or on a **Machine**, through the terminal
-session stream of the tab's root pane.
+A **Window** showing one workspace of a **Server**, local or on a **Machine**: a tab strip, and
+the shown tab's panes as the **Server** lays them out, each through its own terminal session
+stream.
 _Avoid_: shell window, console.
 
 **Taskbar**:
@@ -109,8 +111,9 @@ The **Desktop** bar listing **Tasks** and holding the **Start Menu** button.
 _Avoid_: dock, panel.
 
 **Task**:
-A workspace shown on the **Desktop** as one **Taskbar** button grouping its **Terminal Windows**.
-_Avoid_: group, session (for this concept).
+A **Machine** (or Local) shown on the **Desktop** as one **Taskbar** button grouping its
+**Terminal Windows**; named after the **Machine**, never renamed on the **Desktop**.
+_Avoid_: group, session, workspace (for this concept).
 
 **Minimize**:
 Hiding a **Window** into its **Task**'s **Taskbar** button, from which it is restored.
@@ -125,8 +128,8 @@ Dropping a dragged **Window** on a screen edge to give it a half or the whole **
 _Avoid_: tiling, docking.
 
 **Machines Folder**:
-The **Native Window** listing every **Machine**, opened from its desktop icon; the entry point for
-connecting to **Machines**; opening a **Server Tier** **Machine** shows its **Tasks**.
+The **Native Window** listing every **Machine**, opened from the **Start Menu**; the entry point
+for connecting to **Machines**; opening a **Server Tier** **Machine** shows its windows.
 _Avoid_: My Computer, host list.
 
 **App**:

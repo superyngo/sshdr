@@ -1,8 +1,9 @@
 # Desktop client (`herdr desk`)
 
 The **Desktop** is a separate **Client** (ADR 0006) that shows the local **Server**'s Session, and
-the Sessions of connected **Server Tier** **Machines**, as overlapping **Terminal Windows**. Mapping (ADR 0007): every workspace is a **Task**, every tab a
-**Terminal Window** showing the tab's root pane. Code: `src/cli/desk/`.
+the Sessions of connected **Server Tier** **Machines**, as overlapping **Terminal Windows**. Mapping
+(ADR 0008): every **Machine** (and Local) is a **Task**, every workspace a **Terminal Window** with
+a tab strip, showing the shown tab's panes as the **Server** lays them out. Code: `src/cli/desk/`.
 
 ## Running
 
@@ -19,14 +20,18 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 |---|---|---|
 | Title bar | drag | move (edges snap to a hidden 12×6 grid); releasing at the left or right desk edge fills that half, at the top edge maximizes |
 | Title bar | double click | maximize / restore |
-| Title bar | right click | menu: Rename…, Minimize, Maximize, Close |
-| `[_]` `[□]` `[×]` | click | minimize, maximize / restore, close (`tab close`) |
+| Title bar | right click | menu: Rename… (`workspace rename`), New tab, Minimize, Maximize, Close |
+| `[_]` `[□]` `[×]` | click | minimize, maximize / restore, close the workspace (`workspace close`; asks first when it has more than one tab) |
+| Tab strip: tab | click | show that tab (`tab focus`, so every **Client** shows it) |
+| Tab strip: tab | right click | Rename tab… (`tab rename`), Close tab |
+| Tab strip: `×` after a tab | click | close the tab (`tab close`); the last tab closes the window |
+| Tab strip: `+` | click | new tab (`tab create`), shown at once |
+| Pane | click | focus it (`pane.focus`) and pass the click on |
 | Border | drag | resize |
-| Content | any | forwarded to the pane |
-| `▣ Machines` icon | double click | open the **Machines Folder** |
-| `⊞ Start` | click | **Start Menu**: Machines, New window, New task, Tile all, Quit desk |
-| **Task** button | click | the Task's windows (`▁` = minimized); choosing one restores and raises it |
-| **Task** button | right click | Rename…, New window, Minimize all, Restore all, Close task… (confirms) |
+| Content | any | forwarded to the pane under the pointer |
+| `⊞ Start` | click | **Start Menu**: Machines (the **Machines Folder**), New window, Tile all, Quit desk |
+| **Task** button | click | the **Machine**'s windows (`▁` = minimized); choosing one restores and raises it |
+| **Task** button | right click | New window, Minimize all, Restore all, then Disconnect (connected **Machine**) or Connect |
 | **Taskbar** space without a button | drag | move the bar to the screen edge nearest the pointer (the landing place is highlighted) |
 | **Taskbar** space without a button | right click | Top, Bottom, Left, Right (`•` marks the current one), Larger, Smaller |
 | Thin line along the **Taskbar** (`▁▔▏▕`, under windows) | drag | resize: 1–4 rows at the top or bottom, 12–40 columns at the left or right |
@@ -42,21 +47,25 @@ Menus: arrow keys move, Enter chooses, Esc closes. Dialogs: Enter confirms, Esc 
 
 ## Keys
 
-Ctrl+\ then: `n` new window · `w` close · `z` minimize · `m` maximize · `t` tile · `Tab` next ·
-`q` quit · Ctrl+\ sends a literal Ctrl+\. Everything else goes to the focused window.
+Ctrl+\ then: `n` new window (workspace) in the focused window's **Task** · `w` close · `z` minimize · `m` maximize · `t` tile · `Tab` next ·
+`q` quit · Ctrl+\ sends a literal Ctrl+\. Everything else goes to the focused pane of the focused window.
 
 ## Server state
 
-- State is read over the public API socket: `session.snapshot` for **Tasks** and windows, and one
-  `events.subscribe` stream per **Server** (workspace created, renamed, closed; tab created,
-  closed, renamed, moved; pane created, closed). Each burst of events (100 ms) brings one new
+- State is read over the public API socket: `session.snapshot` for workspaces, tabs, panes, and
+  layouts, and one `events.subscribe` stream per **Server** (workspace created, renamed, closed;
+  tab created, closed, renamed, moved, focused; pane created, closed, focused; layout updated). Each burst of events (100 ms) brings one new
   snapshot, so changes made by any other **Client** appear on the desk. An idle desk starts no
   `herdr` processes; only the ping of a connected **Machine** (below) runs `ssh -W` every 3 s.
-- Changes use public CLI commands: `workspace create|rename|close`, `tab create|rename|close`,
-  `pane run`; each window is one `terminal session control` child.
-- A window shows `TabInfo.root_pane_id` (optional field added by sshdr). Against a server without
-  it, the first pane without a label is used. Other panes in the tab are not shown; the title
-  says `(+N panes)`.
+- Changes use public CLI commands: `workspace create|rename|close`, `tab create|rename|close|focus`,
+  `pane run`; focusing a pane uses the `pane.focus` API request (the CLI focuses only by
+  direction). Each shown pane is one `terminal session control` child.
+- A window shows the workspace's `active_tab_id`. The tab's panes come from its `layouts` entry:
+  their rects are scaled from the **Server**'s layout area into the window, with one cell between
+  neighbours for a divider; a zoomed tab shows only its focused pane. Keys go to the layout's
+  `focused_pane_id`. Without a layout entry the tab shows its root pane (`TabInfo.root_pane_id`,
+  an optional field added by sshdr; against a server without it, the first pane without a label).
+  Dividers cannot be dragged.
 
 ## Machines
 
@@ -71,30 +80,33 @@ socket, and detects the **Tier** each time (ADR 0004):
 
 | Result | Status | Effect |
 |---|---|---|
-| Server running | `Server` | its workspaces join the **Taskbar** as `<machine>: <task>`; its tabs open as windows titled `<machine>: <tab>`; followed by events like Local |
+| Server running | `Server` | the **Machine** gets a **Taskbar** button; its workspaces open as windows titled `<machine>: <workspace>`; followed by events like Local |
 | ssh exit 255 with an authentication or host-key error | `! auth` | nothing opens; no prompt (`BatchMode=yes`) |
 | other ssh exit 255, or no answer in 12 s | `! offline` | nothing opens |
-| ssh works, `herdr` is missing, fails, or its server is not running | `SSH` | a local window runs `ssh <target>`, in a local **Task** named after the **Machine** |
+| ssh works, `herdr` is missing, fails, or its server is not running | `SSH` | a new local workspace named after the **Machine** runs `ssh <target>`; its window, and every tab added to it (each runs `ssh` too), belong to the **Machine**'s **Task** |
 
 Remote commands run as `env HERDR_SESSION=<profile session> herdr …`, and API requests and the
 event stream as `ssh -W <socket>`, over the managed ControlMaster (`platform::shared_ssh_control_path`,
 the same socket herdr itself uses); no newer herdr is needed on the **Machine**. Each master
-carries at most 8 window streams; more windows open another master, started before its streams.
+carries at most 8 pane streams; more windows open another master, started before its streams.
 
 A **Machine** without events for 3 s is pinged. A failed ping (3 s limit), snapshot (5 s), or a
 closed event stream marks it `! offline` (shown in the **Taskbar** hint, within about 7 s of a
 stall) and prefixes its window titles with `⚠`; windows keep their place, and the desk retries
 every 2 s. A window whose stream ends stays put and asks for a snapshot: it reattaches in place,
-or closes when its tab is gone. Disconnect stops following the **Machine** and closes its
-windows; its tabs keep running.
+or closes when its workspace is gone. Disconnect stops following the **Machine** and closes its
+windows; its workspaces keep running.
 
 ## Saved layout
 
 The desk writes `desk.json` in the Session data directory (`crate::session::data_dir()`) once the
 layout has been unchanged for 1 s, and on quit (temporary file, then rename):
 per window the position, size, maximize state, minimize state, and stacking order, keyed by the
-terminal id (local) or `<profile id>/<terminal id>` (**Machine**), plus the **Machines** that were
-connected, and the **Taskbar** edge and size (`taskbar`, omitted at the default bottom, 1 row).
+workspace id (local) or `<profile id>/<workspace id>` (**Machine**) in `workspace`, plus the
+**Machines** that were connected, the **Taskbar** edge and size (`taskbar`, omitted at the default
+bottom, 1 row), and the local `ssh` workspaces with their **Machine** (`ssh_workspaces`).
+Entries of builds before B25 (keyed by terminal id) match no window, so those windows open
+stacked once.
 The next start restores the layout and reconnects those **Machines**; a **Machine**'s windows get their saved place when they open. Windows without an entry open stacked on top.
 
 ## Limits
@@ -102,4 +114,7 @@ The next start restores the layout and reconnects those **Machines**; a **Machin
 - Remote **Machines** need OpenSSH ControlMaster (Unix); the **Machines Folder** cannot add or
   remove **Machines** (`herdr machine add|remove`).
 - Kitty keyboard protocol is not negotiated over `terminal session control` (legacy key bytes only).
+- Choosing a tab or pane also changes the **Server**'s focused workspace, tab, and pane, so a herdr
+  shell **Client** on the same **Session** follows the desk, and the other way round (ADR 0008).
+- The **Machines Folder** has no **Taskbar** button; where **Native Windows** belong is open.
 - Not yet run on Windows (V2).
