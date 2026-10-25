@@ -16,6 +16,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 - docs: plan B14 desk shell: Tasks from workspaces, Windows from tab root panes, Taskbar,
   Start Menu, Minimize, context-menu rename, and `desk.json` window state; adds optional
   `root_pane_id` to `TabInfo`; Windows stays in V2.
+- feat: `herdr desk` client from the B13 spike lands on branch `b14-desk-shell`: overlapping
+  terminal windows over `terminal session control` streams; Windows VT console input moves to
+  `crate::platform::enable_virtual_terminal_input`.
 
 ### 2026-10-24
 

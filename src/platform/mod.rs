@@ -574,6 +574,10 @@ pub(crate) fn begin_cli_output() {}
 #[cfg(not(unix))]
 pub(crate) fn end_cli_output() {}
 
+/// Raw VT console input exists only on Windows (sshdr desk client).
+#[cfg(not(windows))]
+pub(crate) fn enable_virtual_terminal_input() {}
+
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]

@@ -27,6 +27,7 @@ use crate::render_signal::RenderSignal;
 mod agent_detection;
 mod background_agent;
 mod cursor;
+pub(crate) mod desk_mirror; // sshdr: ADR 0006 desk client
 mod input;
 mod kitty_keyboard;
 mod osc;

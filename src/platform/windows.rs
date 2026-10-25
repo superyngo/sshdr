@@ -295,6 +295,22 @@ pub(crate) fn windows_virtual_terminal_input_active() -> bool {
     (unsafe { GetConsoleMode(handle, &mut mode) } != 0) && mode & ENABLE_VIRTUAL_TERMINAL_INPUT != 0
 }
 
+/// Switches the console stdin to raw VT input (sshdr desk client).
+pub(crate) fn enable_virtual_terminal_input() {
+    use windows_sys::Win32::System::Console::{
+        GetConsoleMode, GetStdHandle, SetConsoleMode, ENABLE_VIRTUAL_TERMINAL_INPUT,
+        STD_INPUT_HANDLE,
+    };
+    // SAFETY: plain console API calls on the process's own stdin handle.
+    unsafe {
+        let handle = GetStdHandle(STD_INPUT_HANDLE);
+        let mut mode = 0;
+        if GetConsoleMode(handle, &mut mode) != 0 {
+            SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
+        }
+    }
+}
+
 pub(crate) fn classify_child_exit(status: &portable_pty::ExitStatus) -> super::ChildExitReason {
     // STATUS_CONTROL_C_EXIT is reported without a Unix signal by portable-pty.
     if status.exit_code() == 0xC000013A {
