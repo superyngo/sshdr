@@ -859,13 +859,23 @@ impl App {
         let mut items = Vec::new();
         match (&state.target, state.connected) {
             (Target::Local, _) => {
-                items.push(MenuItem::new("Show windows", "", Action::OpenMachine(key)))
+                items.push(MenuItem::new(
+                    "Show windows",
+                    "",
+                    Action::OpenMachine(key.clone()),
+                ));
+                items.push(MenuItem::new("New window", "", Action::NewWindowOn(key)));
             }
             (Target::Machine(_), true) => {
                 items.push(MenuItem::new(
                     "Show windows",
                     "",
                     Action::OpenMachine(key.clone()),
+                ));
+                items.push(MenuItem::new(
+                    "New window",
+                    "",
+                    Action::NewWindowOn(key.clone()),
                 ));
                 items.push(MenuItem::new("Disconnect", "", Action::Disconnect(key)));
             }
