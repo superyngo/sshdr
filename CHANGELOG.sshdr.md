@@ -6,6 +6,10 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: `machine add --ssh-only` saves a host without herdr setup (B11) in sshdr's
+  `client/ssh-machines.json`; a failed setup with working SSH suggests it; `machine list`
+  (`ssh_only`), `rename`, and `remove` include these machines.
+- feat: desk lists ssh-only machines in the Machines Folder; their Tier is detected on connect.
 - feat: desk Taskbar on any screen edge (B21): drag its empty space or use its right-click menu;
   resize it by dragging the thin line beside it (1–4 rows, 12–40 columns); saved in `desk.json`.
 - feat: desk follows server events instead of polling (B23): one `events.subscribe` stream per

@@ -1,5 +1,5 @@
 # B23、B21、B11 Desktop 後續計畫
-Status: Approved（owner 2026-10-25：四項都選 A）
+Status: Landed（owner 2026-10-25：四項都選 A；B11 的決定 4 改為只提示，見 §7）
 
 Owner 2026-10-25 說「都做」，指 B15 報告最後列的三項。順序：B23 → B21 → B11，每項一個分支，各自合回 `main`。
 
@@ -158,3 +158,29 @@ pty 實測（`docs/tmp/claude-scratch/b21/`，200×36）：
 | 重開 desk | 仍在右邊（`desk.json` `taskbar: {edge: right, size: 24}`） |
 | 右鍵 → Bottom，拖 grip 往上 2 列 | 高度變成 4 列；Smaller 一次後存成 3 列 |
 | Smaller 回到 1 列 | `desk.json` 不再寫 `taskbar` |
+
+### B11（分支 `b11-ssh-tier-machines`）
+
+| commit | 內容 |
+|---|---|
+| `307bc1d7 feat: machine add saves ssh-only machines` | 新增 `cli/ssh_machines.rs`，存放 `client/ssh-machines.json`；`machine add --ssh-only` 只測一次 SSH（`BatchMode`，ssh 結束碼不是 255 就算成功）後存檔；`list`（JSON 多一個 `ssh_only` 欄位，文字輸出的 session 欄顯示 `-`、狀態欄顯示 `ssh-only`）、`rename`、`remove` 也會處理這個檔 |
+| `d011b073 feat: desk lists ssh-only machines` | desk 的 `transport::machines()` 一起讀這個檔，session 用 default |
+
+與計畫不同的地方：
+- **決定 4 改成只提示，不在終端機上詢問。** 實作詢問後，`tests/machine_setup.rs` 有 5 個 herdr 原有測試失敗：它們會數提示出現幾次，而且用 pty 等待輸入。如果要保留詢問，就得改 herdr 的測試，以後和 upstream 同步時會衝突（owner 要求第 8 點）。目前的做法是：安裝或啟動失敗、但 SSH 本身有連上時，印出 ``hint: … run `herdr machine add <host> --ssh-only` ``；SSH 連線失敗或需要認證時不提示。如果還是要詢問，需要另外改這 5 個 upstream 測試。
+- **Tier 不存檔。** ADR 0004 決定 2 規定 Tier 在每次連線時判斷、不能存下來，所以這個檔只記錄「這台機器是用 `--ssh-only` 存的」。desk 對這些機器和其他機器一樣，連線時才判斷 Tier：smbnfs 判斷結果是 `SSH`，所以開 `ssh` 視窗；以後如果那台裝了 herdr、server 也在跑，就會顯示成 `Server`。
+- CLI 的欄位名稱用 `ssh_only`（存在哪個檔），不用 `tier`，理由同上。
+
+實測（獨立的 `XDG_STATE_HOME`）：
+
+| 情境 | 結果 |
+|---|---|
+| `machine add Admin@smbnfs… --label smbnfs-x`（Windows） | `unsupported remote platform: Windows X86; machine was not saved`，接著提示 `--ssh-only` |
+| `machine add … --ssh-only --label smbnfs-ssh` | `Saved SSH-only machine …` |
+| 名稱和 catalog 裡的重複（`smbnfs`） | 拒絕，exit 2 |
+| `nosuchhost.invalid --ssh-only` | `SSH to … failed; machine was not saved` |
+| `machine list` 和 `machine list --json` | 多出一列 `- ssh-only`、`ssh_only: true` |
+| `rename` 成 `omarchy`（已有同名） | 拒絕；`rename` 成其他名字、`remove` 都正常 |
+| desk：Machines Folder | 列出 `smbnfs-only`，右鍵選單有 Connect 和 Open ssh window；雙擊後判斷為 `SSH`，在本機 **Task** `smbnfs-only` 開出 `PS C:\Users\Admin>` |
+
+單元測試：`ssh_machines` 有 2 個，`machine` 的參數解析有 1 個；`tests/machine_setup.rs` 全部通過（68 個）。

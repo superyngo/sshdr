@@ -78,6 +78,7 @@ Server 和 client 都在遠端機器上執行，本地只是一個 SSH 終端。
 ### 3.3 Saved Machines：一個視窗同時連 Local 與多台遠端
 
 - `herdr machine add <host>` 把 profile 寫進 `~/.local/share/herdr/client/endpoints.json`（`client/endpoint/catalog.rs::EndpointCatalog`）。Profile 只記 id、label、SSH target、session、enabled，不存任何憑證。
+- sshdr：`herdr machine add <host> --ssh-only` 不做 herdr 安裝，改存在 `client/ssh-machines.json`（`cli/ssh_machines.rs`，只記 id、label、SSH target）。herdr client 不讀這個檔，所以不會去連這些主機；`machine list`、`rename`、`remove` 和 `herdr desk` 會讀。安裝失敗但 SSH 有連上時，`machine add` 會提示改用 `--ssh-only`。
 - Client 內的 `EndpointSupervisors`（`client/endpoint/supervisor.rs`）為 Local 與每台啟用的 Machine 各維持一條連線。每條遠端連線都走 §3.2 的 bridge，但只做背景重連：不會跳出問題詢問，也不會安裝或升級遠端的 herdr。
 - 健康檢查：閒置 5 秒送 ping，10 秒沒有回應就判定連線失效（`client/endpoint/health.rs`）。重連採指數退避，最長 120 秒；連線穩定 60 秒後才重置退避。
 - Surface interest：只有目前選中的 Machine 會傳送 pane 畫面，其他 Machine 只更新 snapshot（workspace、agent 狀態、通知），以節省頻寬與遠端 CPU（`client/endpoint/activation.rs`）。

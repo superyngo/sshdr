@@ -60,8 +60,10 @@ Ctrl+\ then: `n` new window · `w` close · `z` minimize · `m` maximize · `t` 
 
 ## Machines
 
-The **Machines Folder** lists Local and every enabled saved **Machine** (`herdr machine add`;
-read from the endpoint catalog, never written). Status per row: `Local`, `not connected`,
+The **Machines Folder** lists Local, every enabled saved **Machine** (`herdr machine add`, read
+from the endpoint catalog), and the **Machines** saved with `herdr machine add --ssh-only`
+(`ssh-machines.json`, default Session); both files are read only. The **Tier** of every
+**Machine** is detected on connect, whichever file it came from. Status per row: `Local`, `not connected`,
 `connecting…`, `Server` (with its window count), `SSH`, `! auth`, `! offline`.
 
 Connecting runs `herdr status server --json` on the **Machine** over SSH, which reports its API
@@ -99,6 +101,5 @@ The next start restores the layout and reconnects those **Machines**; a **Machin
 
 - Remote **Machines** need OpenSSH ControlMaster (Unix); the **Machines Folder** cannot add or
   remove **Machines** (`herdr machine add|remove`).
-- `machine add` does not yet save **SSH Tier** profiles (B11), so only hand-edited catalogs list them.
 - Kitty keyboard protocol is not negotiated over `terminal session control` (legacy key bytes only).
 - Not yet run on Windows (V2).

@@ -7,14 +7,13 @@ The living backlog is [BACKLOG.md](BACKLOG.md) — undated, never frozen while w
 
 ## In progress
 
-| Date | Document | Status |
-|---|---|---|
-| 2026-10-25 | [B23、B21、B11 Desktop 後續計畫](2026-10-25-b23-b21-b11-desk-followups.md) | Approved |
+None.
 
 ## Landed
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-10-25 | [B23、B21、B11 Desktop 後續計畫](2026-10-25-b23-b21-b11-desk-followups.md) | Landed |
 | 2026-10-25 | [B15 Machines Folder 計畫](2026-10-25-b15-machines-folder.md) | Landed |
 | 2026-10-25 | [B22 遠端 Terminal Window 技術驗證計畫](2026-10-25-b22-remote-desk-spike.md) | Landed |
 | 2026-10-25 | [B14 桌面外殼計畫](2026-10-25-b14-desk-shell.md) | Landed |
