@@ -7,7 +7,9 @@ The living backlog is [BACKLOG.md](BACKLOG.md) — undated, never frozen while w
 
 ## In progress
 
-None.
+| Date | Document | Status |
+|---|---|---|
+| 2026-10-25 | [B23、B21、B11 Desktop 後續計畫](2026-10-25-b23-b21-b11-desk-followups.md) | Approved |
 
 ## Landed
 
