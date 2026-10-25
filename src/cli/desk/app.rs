@@ -46,9 +46,7 @@ enum Hit {
     Minimize(WinId),
     Maximize(WinId),
     Close(WinId),
-    NewWindow,
-    TileAll,
-    Quit,
+    Start,
     Task(usize),
     Menu(MenuHit),
     Dialog(DialogButton),
@@ -63,6 +61,10 @@ enum Action {
     Close(WinId),
     RenameWindow(WinId),
     NewWindowIn(String),
+    NewWindow,
+    NewTask,
+    TileAll,
+    Quit,
     RenameTask(String),
     MinimizeTask(String),
     RestoreTask(String),
@@ -487,12 +489,9 @@ impl App {
                         self.sync_sizes();
                     }
                     (Some(Hit::Close(id)), MouseButton::Left) => self.close_window(id),
-                    (Some(Hit::NewWindow), MouseButton::Left) => self.new_window(),
-                    (Some(Hit::TileAll), MouseButton::Left) => {
-                        self.desk.tile_all(desk);
-                        self.sync_sizes();
+                    (Some(Hit::Start), MouseButton::Left) => {
+                        self.menu = Some(start_menu((self.screen.x, row)));
                     }
-                    (Some(Hit::Quit), MouseButton::Left) => self.quit = true,
                     (Some(Hit::Task(index)), button) => {
                         let at = (column, row);
                         self.menu = match button {
@@ -640,21 +639,19 @@ impl App {
             let buf = frame.buffer_mut();
             buf.set_style(bar, Style::default().bg(BAR_BG).fg(Color::White));
             let mut x = bar.x;
-            for (label, hit) in [
-                (" ＋ New ", Hit::NewWindow),
-                (" ▦ Tile ", Hit::TileAll),
-                (" ⏻ Quit ", Hit::Quit),
-            ] {
-                let width = super::text_width(label);
-                buf.set_string(
-                    x,
-                    bar.y,
-                    label,
-                    Style::default().bg(BAR_BG).fg(Color::White),
-                );
-                hits.push(Rect::new(x, bar.y, width, 1), hit);
-                x += width + 1;
-            }
+            let start = " ⊞ Start ";
+            let start_style = if self.menu.as_ref().is_some_and(|m| m.title == START_TITLE) {
+                Style::default().bg(FOCUS_BORDER).fg(Color::Black)
+            } else {
+                Style::default()
+                    .bg(Color::Indexed(25))
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            };
+            let width = super::text_width(start);
+            buf.set_string(x, bar.y, start, start_style);
+            hits.push(Rect::new(x, bar.y, width, 1), Hit::Start);
+            x += width + 1;
             let current = self.current_task();
             let texts = self.tasks.iter().map(|task| {
                 let count = self
@@ -806,6 +803,21 @@ impl App {
                     ));
                 }
             }
+            Action::NewWindow => self.new_window(),
+            Action::NewTask => match server::create_task() {
+                Ok((task, info)) => {
+                    self.tasks.push(task);
+                    if let Err(err) = self.attach(info, None) {
+                        self.notice = Some(format!("new task failed: {err}"));
+                    }
+                }
+                Err(err) => self.notice = Some(format!("new task failed: {err}")),
+            },
+            Action::TileAll => {
+                self.desk.tile_all(desk);
+                self.sync_sizes();
+            }
+            Action::Quit => self.quit = true,
             Action::NewWindowIn(ws) => {
                 match server::create_window(&ws).and_then(|info| self.attach(info, None)) {
                     Ok(_) => {}
@@ -878,6 +890,25 @@ impl App {
             }
             _ => {}
         }
+    }
+}
+
+const START_TITLE: &str = "Start";
+
+/// The **Start Menu**, opening upward from the Start button.
+fn start_menu(at: (u16, u16)) -> Menu<Action> {
+    let items = vec![
+        MenuItem::new("New window", "^\\ n", Action::NewWindow),
+        MenuItem::new("New task", "", Action::NewTask),
+        MenuItem::new("Tile all", "^\\ t", Action::TileAll),
+        MenuItem::new("Quit desk", "^\\ q", Action::Quit),
+    ];
+    Menu {
+        title: START_TITLE.to_string(),
+        at,
+        above: true,
+        items,
+        highlighted: 0,
     }
 }
 
@@ -1092,5 +1123,28 @@ fn write_stats(stats: &Stats) {
     });
     if let Ok(mut file) = std::fs::File::create(path) {
         let _ = writeln!(file, "{line}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn start_menu_opens_above_the_taskbar_with_shell_actions() {
+        let menu = start_menu((0, 35));
+        let actions: Vec<Action> = menu.items.iter().map(|i| i.action.clone()).collect();
+        assert_eq!(
+            actions,
+            [
+                Action::NewWindow,
+                Action::NewTask,
+                Action::TileAll,
+                Action::Quit
+            ]
+        );
+        let desk = desk_area(Rect::new(0, 0, 120, 36));
+        let rect = menu.rect(desk).unwrap();
+        assert_eq!((rect.x, rect.bottom()), (0, 35));
     }
 }

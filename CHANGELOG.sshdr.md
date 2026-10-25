@@ -28,6 +28,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   titles (rename, minimize, maximize, close) and Task buttons (rename, new window, minimize or
   restore all, close task with confirmation); renames write back with `tab rename` /
   `workspace rename`. Menu and dialog ported from wens-tui-lab.
+- feat: desk Start Menu: a `⊞ Start` button at the left of the Taskbar opens New window, New
+  task (`workspace create`), Tile all, and Quit desk; replaces the spike's New/Tile/Quit buttons.
 
 ### 2026-10-24
 
