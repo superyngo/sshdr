@@ -55,6 +55,20 @@ pub(super) struct TabInfo {
     /// Size of the **Server**'s layout area; pane rects scale from it.
     pub area: (u16, u16),
     pub focused_pane_id: String,
+    /// Splits of the layout, in [`TabInfo::area`] cells; none while zoomed (B28).
+    pub splits: Vec<SplitSlot>,
+}
+
+/// One split of a tab's layout: `layout.set_split_ratio` takes its `path`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct SplitSlot {
+    /// From the root: `false` = first child, `true` = second.
+    pub path: Vec<bool>,
+    /// Side by side (`right`); otherwise stacked (`down`).
+    pub across: bool,
+    /// The first child's share, in thousandths.
+    pub ratio: u16,
+    pub rect: ratatui::layout::Rect,
 }
 
 /// One pane of a tab's layout, in **Server** layout cells.
@@ -75,6 +89,7 @@ impl TabInfo {
         }];
         self.area = (1, 1);
         self.focused_pane_id = self.pane_id.clone();
+        self.splits = Vec::new();
         self
     }
 }
@@ -267,6 +282,7 @@ pub(super) fn build_snapshot(
                 panes: Vec::new(),
                 area: (1, 1),
                 focused_pane_id: String::new(),
+                splits: Vec::new(),
                 tab_id,
             };
             Some(match layout.and_then(|l| laid_out(&info, l, &in_tab)) {
@@ -344,12 +360,77 @@ fn laid_out(info: &TabInfo, layout: &Value, in_tab: &[&Value]) -> Option<TabInfo
             })
         })
         .collect();
+    let splits = if zoomed {
+        Vec::new()
+    } else {
+        layout
+            .get("splits")
+            .and_then(Value::as_array)
+            .map(|splits| {
+                splits
+                    .iter()
+                    .filter_map(|split| split_slot(split, area))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
     (!panes.is_empty() && area.width > 0 && area.height > 0).then(|| TabInfo {
         panes,
+        splits,
         area: (area.width, area.height),
         focused_pane_id: focused,
         ..info.clone()
     })
+}
+
+/// A `splits` entry; its id is `split_<n>_root` or `split_<n>_<path as 0/1>`.
+fn split_slot(split: &Value, area: ratatui::layout::Rect) -> Option<SplitSlot> {
+    let id = text(split, "id")?;
+    let bits = id.strip_prefix("split_")?.split_once('_')?.1;
+    let path = if bits == "root" {
+        Vec::new()
+    } else {
+        bits.chars()
+            .map(|c| match c {
+                '0' => Some(false),
+                '1' => Some(true),
+                _ => None,
+            })
+            .collect::<Option<Vec<bool>>>()?
+    };
+    let across = match text(split, "direction")?.as_str() {
+        "right" => true,
+        "down" => false,
+        _ => return None,
+    };
+    let ratio = split.get("ratio").and_then(Value::as_f64)?;
+    let r = rect(split.get("rect")?)?;
+    Some(SplitSlot {
+        path,
+        across,
+        ratio: (ratio.clamp(0.0, 1.0) * 1000.0).round() as u16,
+        rect: ratatui::layout::Rect::new(
+            r.x.saturating_sub(area.x),
+            r.y.saturating_sub(area.y),
+            r.width,
+            r.height,
+        ),
+    })
+}
+
+/// `layout.set_split_ratio` for a tab's split.
+pub(super) fn set_split_ratio(target: &Target, tab_id: &str, path: Vec<bool>, ratio: f32) {
+    let method = Method::LayoutSetSplitRatio(crate::api::schema::LayoutSetSplitRatioParams {
+        tab_id: Some(tab_id.to_string()),
+        pane_id: None,
+        path,
+        ratio,
+    });
+    let result = socket_path(target, CALL_TIMEOUT)
+        .and_then(|socket| api_call(target, &socket, method, CALL_TIMEOUT));
+    if let Err(err) = result {
+        tracing::warn!(err = %err.message, "desk: split ratio failed");
+    }
 }
 
 /// What wakes a [`spawn_watcher`] thread.
@@ -551,6 +632,7 @@ fn created_tab(value: &Value) -> io::Result<TabInfo> {
         panes: Vec::new(),
         area: (1, 1),
         focused_pane_id: String::new(),
+        splits: Vec::new(),
     }
     .root_only())
 }
@@ -683,6 +765,12 @@ mod tests {
             "panes": [
                 {"pane_id": "p1", "rect": {"x": 1, "y": 2, "width": 50, "height": 40}},
                 {"pane_id": "p2", "rect": {"x": 51, "y": 2, "width": 50, "height": 40}}
+            ],
+            "splits": [
+                {"id": "split_0_root", "direction": "right", "ratio": 0.5,
+                "rect": {"x": 1, "y": 2, "width": 100, "height": 40}},
+                {"id": "split_1_10", "direction": "down", "ratio": 0.25,
+                "rect": {"x": 51, "y": 2, "width": 50, "height": 40}}
             ]})
         };
         let snap = build_snapshot(&[], &tabs, &panes, &[layout(false)]);
@@ -691,8 +779,18 @@ mod tests {
         assert_eq!(tab.focused_pane_id, "p2");
         assert_eq!(tab.panes[1].terminal_id, "t2");
         assert_eq!(tab.panes[1].rect, ratatui::layout::Rect::new(50, 0, 50, 40));
+        assert_eq!(tab.splits.len(), 2);
+        assert!(tab.splits[0].path.is_empty() && tab.splits[0].across);
+        assert_eq!(tab.splits[1].path, [true, false]);
+        assert!(!tab.splits[1].across);
+        assert_eq!(tab.splits[1].ratio, 250);
+        assert_eq!(
+            tab.splits[1].rect,
+            ratatui::layout::Rect::new(50, 0, 50, 40)
+        );
         let zoomed = build_snapshot(&[], &tabs, &panes, &[layout(true)]);
         assert_eq!(zoomed.tabs[0].panes.len(), 1);
+        assert!(zoomed.tabs[0].splits.is_empty());
         assert_eq!(
             zoomed.tabs[0].panes[0].rect,
             ratatui::layout::Rect::new(0, 0, 100, 40)

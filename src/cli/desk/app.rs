@@ -21,6 +21,7 @@ use super::dialog::{Dialog, DialogButton, Outcome};
 use super::folder::{self, Folder};
 use super::menu::{Menu, MenuHit, MenuItem};
 use super::server::{self, Snapshot, TabInfo, Wake, WorkspaceInfo};
+use super::split::{RatioSender, SplitDrag};
 use super::state;
 use super::stream::{DeskEvent, Session};
 use super::taskbar::{self, Edge, Place};
@@ -70,6 +71,8 @@ enum Hit {
     BarToggle,
     /// The desk line touching the **Taskbar**: drag resizes the bar.
     Grip,
+    /// A window's content outside its panes: dividers drag their split (B28).
+    Divider(WinId),
 }
 
 /// What a menu row does.
@@ -267,6 +270,8 @@ struct App {
     /// **Taskbar** edge and size (B21).
     bar: Place,
     bar_drag: Option<BarDrag>,
+    split_drag: Option<SplitDrag>,
+    ratios: RatioSender,
 }
 
 impl App {
@@ -381,6 +386,14 @@ impl App {
             .and_then(WinData::active_tab)
             .map(|tab| layout_rects(tab, area))
             .unwrap_or_default()
+    }
+
+    /// The split whose divider is at `point` in window `id`.
+    fn pick_split(&self, id: WinId, point: (u16, u16)) -> Option<SplitDrag> {
+        let area = content_area(self.desk.get(id)?.inner());
+        let data = self.data.get(&id)?;
+        let target = self.target(&data.target)?;
+        SplitDrag::pick(data.active_tab()?, area, point, target)
     }
 
     /// Open a window for a workspace and stream its shown tab.
@@ -1436,11 +1449,16 @@ impl App {
                         self.menu = self.taskbar_menu((column, row));
                     }
                     (Some(Hit::Grip), MouseButton::Left) => self.bar_drag = Some(BarDrag::Resize),
+                    (Some(Hit::Divider(id)), MouseButton::Left) => {
+                        self.split_drag = self.pick_split(id, (column, row));
+                    }
                     _ => {}
                 }
             }
             MouseEventKind::Drag(button) => {
-                if let Some(bar_drag) = self.bar_drag {
+                if let Some(split) = self.split_drag.as_mut() {
+                    split.send((column, row), false, &self.ratios);
+                } else if let Some(bar_drag) = self.bar_drag {
                     match bar_drag {
                         BarDrag::Move(_) => {
                             let edge = taskbar::nearest_edge((column, row), self.screen);
@@ -1472,7 +1490,9 @@ impl App {
                 }
             }
             MouseEventKind::Up(button) => {
-                if let Some(bar_drag) = self.bar_drag.take() {
+                if let Some(mut split) = self.split_drag.take() {
+                    split.send((column, row), true, &self.ratios);
+                } else if let Some(bar_drag) = self.bar_drag.take() {
                     let place = match bar_drag {
                         BarDrag::Move(Some(edge)) => self.bar.moved(edge, self.screen),
                         _ => self.bar,
@@ -1555,6 +1575,9 @@ impl App {
                 let rects = self.pane_rects(w.id);
                 let focused_pane = data.focused_pane();
                 draw_dividers(&rects, area, frame.buffer_mut(), border);
+                if data.active_tab().is_some_and(|t| !t.splits.is_empty()) {
+                    hits.push(area, Hit::Divider(w.id));
+                }
                 for (index, (pane, rect)) in data.panes.iter().zip(&rects).enumerate() {
                     pane.mirror
                         .render(frame, *rect, focused && index == focused_pane);
@@ -1985,19 +2008,12 @@ fn content_area(inner: Rect) -> Rect {
 /// A tab's pane rects in `area`: the **Server** layout scaled to fit, one cell left between
 /// neighbours for a divider.
 fn layout_rects(tab: &TabInfo, area: Rect) -> Vec<Rect> {
-    let (aw, ah) = (u32::from(tab.area.0.max(1)), u32::from(tab.area.1.max(1)));
-    let scale = |v: u16, total: u32, size: u16| {
-        let scaled = (u32::from(v) * u32::from(size) + total / 2) / total;
-        u16::try_from(scaled).unwrap_or(size).min(size)
-    };
     tab.panes
         .iter()
         .map(|slot| {
-            let r = slot.rect;
-            let left = area.x + scale(r.x, aw, area.width);
-            let top = area.y + scale(r.y, ah, area.height);
-            let mut right = area.x + scale(r.x.saturating_add(r.width), aw, area.width);
-            let mut bottom = area.y + scale(r.y.saturating_add(r.height), ah, area.height);
+            let r = super::split::scaled(tab, slot.rect, area);
+            let (left, top) = (r.x, r.y);
+            let (mut right, mut bottom) = (r.right(), r.bottom());
             if right < area.right() && right > left + 1 {
                 right -= 1;
             }
@@ -2085,7 +2101,8 @@ fn hit_window(hit: Option<Hit>) -> Option<WinId> {
         | Hit::Close(id)
         | Hit::Tab(id, _)
         | Hit::TabClose(id, _)
-        | Hit::NewTab(id) => Some(id),
+        | Hit::NewTab(id)
+        | Hit::Divider(id) => Some(id),
         _ => None,
     }
 }
@@ -2194,6 +2211,8 @@ pub(super) fn run() -> io::Result<i32> {
         ssh_on_tier: Vec::new(),
         bar: Place::default(),
         bar_drag: None,
+        split_drag: None,
+        ratios: RatioSender::default(),
     };
     let reattached = snap.workspaces.len();
     app.apply(LOCAL_KEY, snap);
@@ -2394,6 +2413,7 @@ mod tests {
             panes: Vec::new(),
             area: (1, 1),
             focused_pane_id: String::new(),
+            splits: Vec::new(),
         }
     }
 

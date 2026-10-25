@@ -7,6 +7,7 @@ mod dialog;
 mod folder;
 mod menu;
 mod server;
+mod split;
 mod state;
 mod stream;
 mod taskbar;
