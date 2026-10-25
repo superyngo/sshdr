@@ -33,6 +33,7 @@ mod protocol_guard;
 mod server;
 mod server_not_running;
 mod spec;
+pub(crate) mod ssh_machines; // sshdr: B11 SSH Tier machines
 mod status;
 pub(crate) mod tab;
 mod target;

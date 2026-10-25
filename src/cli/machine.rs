@@ -11,7 +11,7 @@ const HELP: &str = "Usage:
   herdr machine list [--json]
   herdr machine status [<label-or-id>] [--json]
   herdr machine reconnect <label-or-id>
-  herdr machine add <ssh-target> [--label <label>] [--remote-session <name>]
+  herdr machine add <ssh-target> [--label <label>] [--remote-session <name>] [--ssh-only]
   herdr machine rename <profile-id> --label <label>
   herdr machine remove <profile-id>
   herdr machine enable <profile-id>
@@ -19,6 +19,8 @@ const HELP: &str = "Usage:
 
 Add prepares the remote Herdr installation and starts its server before saving.
 Missing or incompatible installations require approval in an interactive terminal.
+--ssh-only saves an SSH-only machine instead, without Herdr setup (sshdr): kept outside the
+catalog Herdr clients connect to, listed as ssh-only, and shown by `herdr desk`. When setup fails after SSH worked, add suggests it.
 Changes apply automatically to open local Herdr clients.
 Removing or disabling a machine leaves its remote sessions running.
 Saved machines contain only a label, SSH target, explicit Herdr session, and enabled state.
@@ -32,6 +34,8 @@ struct MachineListRow<'a> {
     session: &'a str,
     enabled: bool,
     selected: bool,
+    /// sshdr: saved with `--ssh-only` (B11), outside herdr's catalog.
+    ssh_only: bool,
 }
 
 pub(super) fn run_machine_command(args: &[String]) -> std::io::Result<i32> {
@@ -65,6 +69,7 @@ fn list(args: &[String]) -> std::io::Result<i32> {
         }
     };
     let catalog = load_catalog()?;
+    let ssh_only = super::ssh_machines::load().map_err(std::io::Error::other)?;
     let rows = catalog
         .ssh
         .iter()
@@ -75,7 +80,17 @@ fn list(args: &[String]) -> std::io::Result<i32> {
             session: &profile.session,
             enabled: profile.enabled,
             selected: catalog.selected_profile.as_ref() == Some(&profile.id),
+            ssh_only: false,
         })
+        .chain(ssh_only.iter().map(|machine| MachineListRow {
+            id: machine.id.as_str(),
+            label: &machine.label,
+            target: &machine.target,
+            session: "",
+            enabled: true,
+            selected: false,
+            ssh_only: true,
+        }))
         .collect::<Vec<_>>();
     if json {
         println!(
@@ -89,10 +104,14 @@ fn list(args: &[String]) -> std::io::Result<i32> {
         return Ok(0);
     }
     for row in rows {
-        let state = if row.enabled { "enabled" } else { "disabled" };
+        let (session, state) = match (row.ssh_only, row.enabled) {
+            (true, _) => ("-", "ssh-only"),
+            (_, true) => (row.session, "enabled"),
+            (_, false) => (row.session, "disabled"),
+        };
         println!(
             "{}\t{}\t{}\t{}\t{}",
-            row.id, row.label, row.target, row.session, state
+            row.id, row.label, row.target, session, state
         );
     }
     Ok(0)
@@ -212,6 +231,7 @@ struct AddArgs {
     target: String,
     label: Option<String>,
     session: Option<String>,
+    ssh_only: bool,
 }
 
 fn parse_add_args(args: &[String]) -> Result<AddArgs, String> {
@@ -219,9 +239,15 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, String> {
     let mut target = None;
     let mut label = None;
     let mut session = None;
+    let mut ssh_only = false;
     let mut index = 0;
     while index < args.len() {
         let (name, value) = match args[index].as_str() {
+            "--ssh-only" if !ssh_only => {
+                ssh_only = true;
+                index += 1;
+                continue;
+            }
             "--label" | "--remote-session" => {
                 let Some(value) = args.get(index + 1) else {
                     return Err(format!("missing value for {}", args[index]));
@@ -251,13 +277,17 @@ fn parse_add_args(args: &[String]) -> Result<AddArgs, String> {
         }
     }
     let target = target.ok_or_else(|| {
-        "usage: herdr machine add <ssh-target> [--label <label>] [--remote-session <name>]"
+        "usage: herdr machine add <ssh-target> [--label <label>] [--remote-session <name>] [--ssh-only]"
             .to_owned()
     })?;
+    if ssh_only && session.is_some() {
+        return Err("--ssh-only machines have no Herdr session; drop --remote-session".into());
+    }
     Ok(AddArgs {
         target,
         label,
         session,
+        ssh_only,
     })
 }
 
@@ -301,6 +331,7 @@ fn add(args: &[String]) -> std::io::Result<i32> {
         target,
         label,
         session,
+        ssh_only,
     } = match parse_add_args(args) {
         Ok(args) => args,
         Err(error) => {
@@ -308,6 +339,13 @@ fn add(args: &[String]) -> std::io::Result<i32> {
             return Ok(2);
         }
     };
+    if ssh_only {
+        if !super::ssh_machines::ssh_works(&target) {
+            eprintln!("error: SSH to {target} failed; machine was not saved");
+            return Ok(1);
+        }
+        return save_ssh_only(&target, label);
+    }
     let mut setup = None;
     let session =
         if session.is_none() && std::io::stdin().is_terminal() && std::io::stderr().is_terminal() {
@@ -323,7 +361,7 @@ fn add(args: &[String]) -> std::io::Result<i32> {
                 Err(error) => {
                     eprintln!("error: {error}; machine was not saved");
                     crate::remote::print_saved_ssh_error_hint(&error, &target);
-                    return Ok(1);
+                    return offer_ssh_only(&target, &error);
                 }
             }
         } else {
@@ -354,7 +392,7 @@ fn add(args: &[String]) -> std::io::Result<i32> {
         Err(error) => {
             eprintln!("error: {error}; machine was not saved");
             crate::remote::print_saved_ssh_error_hint(&error, &target);
-            return Ok(1);
+            return offer_ssh_only(&target, &error);
         }
     };
     // Setup can wait for human approval. Do not overwrite catalog edits made meanwhile.
@@ -388,6 +426,34 @@ fn add(args: &[String]) -> std::io::Result<i32> {
     println!("Saved SSH machine {id}. Remote server is ready.");
     println!("Open Herdr clients connect automatically.");
     Ok(0)
+}
+
+/// sshdr (B11): setup failed after SSH itself worked. Point at `--ssh-only` instead of asking:
+/// a second prompt here would change herdr's setup dialogue (`tests/machine_setup.rs`).
+fn offer_ssh_only(target: &str, error: &std::io::Error) -> std::io::Result<i32> {
+    let message = error.to_string();
+    let ssh_failed = message.contains("SSH connection failed")
+        || crate::remote::ssh_error_requires_authentication(&message);
+    if !ssh_failed {
+        eprintln!("hint: to keep {target} as an SSH-only machine, run `herdr machine add {target} --ssh-only`.");
+    }
+    Ok(1)
+}
+
+fn save_ssh_only(target: &str, label: Option<String>) -> std::io::Result<i32> {
+    let label =
+        label.unwrap_or_else(|| default_label(target, crate::session::DEFAULT_SESSION_NAME));
+    let catalog = load_catalog()?;
+    match super::ssh_machines::add(&catalog, &label, target) {
+        Ok(id) => {
+            println!("Saved SSH-only machine {id} ({label}).");
+            Ok(0)
+        }
+        Err(error) => {
+            eprintln!("error: {error}; pass --label to choose another name");
+            Ok(2)
+        }
+    }
 }
 
 fn select_remote_session(sessions: &[String], target: &str) -> std::io::Result<String> {
@@ -487,10 +553,20 @@ fn rename(args: &[String]) -> std::io::Result<i32> {
     let mut catalog = load_catalog()?;
     match catalog.rename_ssh(&id, label) {
         Ok(true) => {}
-        Ok(false) => {
-            eprintln!("machine profile {id} was not found");
-            return Ok(1);
-        }
+        Ok(false) => match super::ssh_machines::rename(&catalog, &id, label) {
+            Ok(true) => {
+                println!("Renamed SSH-only machine {id}.");
+                return Ok(0);
+            }
+            Ok(false) => {
+                eprintln!("machine profile {id} was not found");
+                return Ok(1);
+            }
+            Err(error) => {
+                eprintln!("error: {error}");
+                return Ok(2);
+            }
+        },
         Err(error) => {
             eprintln!("error: {error}");
             return Ok(2);
@@ -520,8 +596,17 @@ fn remove(args: &[String]) -> std::io::Result<i32> {
         })
         .transpose()?;
     if !catalog.remove_ssh(&id) {
-        eprintln!("machine profile {id} was not found");
-        return Ok(1);
+        return match super::ssh_machines::remove(&id) {
+            Ok(true) => {
+                println!("Removed SSH-only machine {id}.");
+                Ok(0)
+            }
+            Ok(false) => {
+                eprintln!("machine profile {id} was not found");
+                Ok(1)
+            }
+            Err(error) => Err(std::io::Error::other(error)),
+        };
     }
     store_catalog(&catalog)?;
     if let Some(cache) = metadata_cache {
@@ -614,10 +699,21 @@ mod tests {
                     target: "workstation.coder".into(),
                     label: Some("coder".into()),
                     session: session.map(str::to_owned),
+                    ssh_only: false,
                 },
                 "{args:?}"
             );
         }
+    }
+
+    #[test]
+    fn add_parser_takes_ssh_only_once_and_without_a_session() {
+        let args = |list: &[&str]| list.iter().map(|a| (*a).to_owned()).collect::<Vec<_>>();
+        let parsed = parse_add_args(&args(&["--ssh-only", "Admin@smbnfs"])).unwrap();
+        assert!(parsed.ssh_only);
+        assert_eq!(parsed.target, "Admin@smbnfs");
+        assert!(parse_add_args(&args(&["host", "--ssh-only", "--ssh-only"])).is_err());
+        assert!(parse_add_args(&args(&["host", "--ssh-only", "--remote-session", "x"])).is_err());
     }
 
     #[test]
@@ -697,6 +793,7 @@ mod tests {
             session: "agents",
             enabled: true,
             selected: false,
+            ssh_only: false,
         })
         .unwrap();
         assert!(!encoded.contains("password"));
