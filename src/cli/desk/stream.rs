@@ -1,5 +1,5 @@
-//! Stream of one desk window: a `herdr terminal session control` child process (JSON lines)
-//! driving the window's pane. Only public CLI surfaces are used.
+//! Stream of one pane in a desk window: a `herdr terminal session control` child process (JSON
+//! lines) driving that pane. Only public CLI surfaces are used.
 
 use std::io::{self, BufRead, BufReader, Write};
 use std::process::{Child, ChildStdin, Stdio};
@@ -15,6 +15,8 @@ pub(super) enum DeskEvent {
     Input(Vec<u8>),
     Frame {
         win: WinId,
+        /// [`Session::serial`] of the stream: a window streams one pane per stream.
+        serial: u64,
         width: u16,
         height: u16,
         bytes: Vec<u8>,
@@ -170,6 +172,7 @@ fn read_frames(
                 };
                 let frame = DeskEvent::Frame {
                     win,
+                    serial,
                     width: dim("width"),
                     height: dim("height"),
                     bytes,

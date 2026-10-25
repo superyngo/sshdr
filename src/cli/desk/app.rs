@@ -1,7 +1,7 @@
 //! Desk event loop: raw host input, window drag sessions, per-window session streams, and
 //! composition of the mirrored terminals into one frame.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Read, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
@@ -20,7 +20,7 @@ use ratatui::{
 use super::dialog::{Dialog, DialogButton, Outcome};
 use super::folder::{self, Folder};
 use super::menu::{Menu, MenuHit, MenuItem};
-use super::server::{self, Snapshot, TaskInfo, Wake, WindowInfo};
+use super::server::{self, Snapshot, TabInfo, Wake, WorkspaceInfo};
 use super::state;
 use super::stream::{DeskEvent, Session};
 use super::taskbar::{self, Edge, Place};
@@ -51,6 +51,12 @@ enum Hit {
     Minimize(WinId),
     Maximize(WinId),
     Close(WinId),
+    /// A tab in a window's tab strip: click shows it, right click opens its menu.
+    Tab(WinId, usize),
+    /// The `×` of a tab.
+    TabClose(WinId, usize),
+    /// `+` after the tabs.
+    NewTab(WinId),
     Start,
     Task(usize),
     Menu(MenuHit),
@@ -71,15 +77,16 @@ enum Action {
     ToggleMaximize(WinId),
     Close(WinId),
     RenameWindow(WinId),
-    NewWindowIn(TaskRef),
+    NewTab(WinId),
+    RenameTab(WinId, String),
+    CloseTab(WinId, String),
+    /// New window (workspace) in the **Task** of this **Machine** key.
+    NewWindowOn(String),
     NewWindow,
-    NewTask,
     TileAll,
     Quit,
-    RenameTask(TaskRef),
-    MinimizeTask(TaskRef),
-    RestoreTask(TaskRef),
-    CloseTask(TaskRef),
+    MinimizeTask(String),
+    RestoreTask(String),
     TaskbarEdge(Edge),
     /// Grow (+1) or shrink (-1) the **Taskbar**.
     TaskbarSize(i8),
@@ -92,15 +99,12 @@ enum Action {
     OpenSsh(String),
 }
 
-/// A **Task** on a **Target**: (target key, workspace id).
-type TaskRef = (String, String);
-
 /// What a dialog's primary button does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum DialogTarget {
     RenameWindow(WinId),
-    RenameTask(TaskRef),
-    CloseTask(TaskRef),
+    RenameTab(WinId, String),
+    CloseWindow(WinId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -125,11 +129,54 @@ struct Drag {
     zone: Option<Rect>,
 }
 
+/// A **Terminal Window**: one workspace (ADR 0008).
 struct WinData {
-    /// Key of the window's **Target**.
+    /// Key of the **Target** whose **Server** holds the workspace.
     target: String,
-    info: WindowInfo,
+    /// Key of the **Task** (**Machine**) holding the window: `target`, or the **SSH Tier**
+    /// **Machine** of a local `ssh` workspace.
+    task: String,
+    workspace: WorkspaceInfo,
+    /// The workspace's tabs, in server order.
+    tabs: Vec<TabInfo>,
     attached_at: Instant,
+    /// Streams of the shown tab's panes.
+    panes: Vec<PaneView>,
+}
+
+impl WinData {
+    fn active_tab(&self) -> Option<&TabInfo> {
+        self.tabs
+            .iter()
+            .find(|t| t.tab_id == self.workspace.active_tab_id)
+            .or(self.tabs.first())
+    }
+
+    fn active_index(&self) -> usize {
+        self.tabs
+            .iter()
+            .position(|t| t.tab_id == self.workspace.active_tab_id)
+            .unwrap_or(0)
+    }
+
+    fn pane_by_serial(&mut self, serial: u64) -> Option<&mut PaneView> {
+        self.panes
+            .iter_mut()
+            .find(|p| p.session.as_ref().is_some_and(|s| s.serial == serial))
+    }
+
+    fn release(&mut self) {
+        for pane in &mut self.panes {
+            if let Some(session) = pane.session.take() {
+                session.release();
+            }
+        }
+    }
+}
+
+/// One pane of the shown tab, mirrored through its own stream.
+struct PaneView {
+    terminal_id: String,
     /// `None` while the stream is down; the window keeps its place until the tab is gone.
     session: Option<Session>,
     /// ControlMaster index of the stream (`transport::STREAMS_PER_MASTER`).
@@ -145,12 +192,6 @@ struct Stats {
     draws: u64,
     draw_total: Duration,
     draw_max: Duration,
-}
-
-/// A **Task** with the key of its **Target**.
-struct Task {
-    target: String,
-    info: TaskInfo,
 }
 
 /// Local, or a saved **Machine**, with its connection state.
@@ -189,10 +230,11 @@ impl Watcher {
 }
 
 struct App {
-    tasks: Vec<Task>,
     targets: Vec<TargetState>,
     /// `desk.json` as loaded; geometry for windows that open after startup.
     saved: state::DeskState,
+    /// Local workspaces opened as `ssh` windows: workspace id → **Machine** key.
+    ssh_workspaces: BTreeMap<String, String>,
     events: Sender<DeskEvent>,
     desk: Desk,
     data: HashMap<WinId, WinData>,
@@ -259,9 +301,9 @@ impl App {
     /// The ControlMaster for a new stream to `key`: the first with room (B22 results §4.4).
     fn pick_master(&self, key: &str) -> usize {
         let mut used: HashMap<usize, usize> = HashMap::new();
-        for data in self.data.values() {
-            if data.target == key && data.session.is_some() {
-                *used.entry(data.master).or_default() += 1;
+        for data in self.data.values().filter(|d| d.target == key) {
+            for pane in data.panes.iter().filter(|p| p.session.is_some()) {
+                *used.entry(pane.master).or_default() += 1;
             }
         }
         (0..)
@@ -274,6 +316,7 @@ impl App {
         id: WinId,
         key: &str,
         terminal_id: &str,
+        size: (u16, u16),
     ) -> io::Result<(Session, usize)> {
         let target = self
             .target(key)
@@ -283,12 +326,6 @@ impl App {
             Target::Machine(_) => self.pick_master(key),
         };
         transport::ensure_master(target, master)?;
-        let size = self
-            .desk
-            .get(id)
-            .map(|w| w.inner())
-            .map(|r| (r.width.max(1), r.height.max(1)))
-            .unwrap_or((1, 1));
         Session::spawn(
             id,
             target,
@@ -301,15 +338,31 @@ impl App {
         .map(|session| (session, master))
     }
 
-    fn attach(&mut self, key: &str, info: WindowInfo, rect: Option<Rect>) -> io::Result<WinId> {
+    /// Where a window shows its panes: the content area below the tab strip.
+    fn pane_rects(&self, id: WinId, count: usize) -> Vec<Rect> {
+        let area = self
+            .desk
+            .get(id)
+            .map(|w| content_area(w.inner()))
+            .unwrap_or_default();
+        vec![area; count.min(1)]
+    }
+
+    /// Open a window for a workspace and stream its shown tab.
+    fn attach(
+        &mut self,
+        key: &str,
+        workspace: WorkspaceInfo,
+        tabs: Vec<TabInfo>,
+        rect: Option<Rect>,
+    ) -> io::Result<WinId> {
         let desk = self.desk_rect();
-        let title = self.window_title(key, &info, false);
-        let id = self.desk.open(title, NEW_WINDOW_SIZE, desk);
+        let id = self.desk.open(String::new(), NEW_WINDOW_SIZE, desk);
         let saved = self
             .saved
             .windows
             .iter()
-            .find(|s| s.terminal_id == state::key(key, &info.terminal_id))
+            .find(|s| s.workspace == state::key(key, &workspace.workspace_id))
             .cloned();
         if let Some(w) = self.desk.get_mut(id) {
             match (rect, saved) {
@@ -318,138 +371,228 @@ impl App {
                 (None, None) => {}
             }
         }
-        let inner = self.desk.get(id).map(|w| w.inner()).unwrap_or_default();
-        let size = (inner.width.max(1), inner.height.max(1));
-        let started = Mirror::new(size.0, size.1).and_then(|mirror| {
-            self.spawn_session(id, key, &info.terminal_id)
-                .map(|session| (mirror, session))
-        });
-        match started {
-            Ok((mirror, (session, master))) => {
-                self.data.insert(
-                    id,
-                    WinData {
-                        target: key.to_string(),
-                        info,
-                        attached_at: Instant::now(),
-                        session: Some(session),
-                        master,
-                        mirror,
-                        sent_size: size,
-                    },
-                );
+        let task = self.task_of(key, &workspace.workspace_id);
+        self.data.insert(
+            id,
+            WinData {
+                target: key.to_string(),
+                task,
+                workspace,
+                tabs,
+                attached_at: Instant::now(),
+                panes: Vec::new(),
+            },
+        );
+        match self.show_panes(id) {
+            Ok(()) => {
+                self.refresh_title(id);
                 Ok(id)
             }
             Err(err) => {
-                self.desk.close(id);
+                self.drop_window(id);
                 Err(err)
             }
         }
     }
 
-    /// Restart the stream of a window whose stream ended, in place.
-    fn reattach(&mut self, id: WinId) {
-        let Some((key, terminal_id)) = self
-            .data
-            .get(&id)
-            .map(|d| (d.target.clone(), d.info.terminal_id.clone()))
-        else {
-            return;
-        };
-        match self.spawn_session(id, &key, &terminal_id) {
-            Ok((session, master)) => {
-                let inner = self.desk.get(id).map(|w| w.inner()).unwrap_or_default();
-                if let Some(data) = self.data.get_mut(&id) {
-                    data.session = Some(session);
-                    data.master = master;
-                    data.sent_size = (inner.width.max(1), inner.height.max(1));
-                }
-                self.refresh_title(id);
-            }
-            Err(err) => tracing::warn!(%err, "desk: reattach failed"),
+    /// The **Task** of a workspace on `key`.
+    fn task_of(&self, key: &str, workspace_id: &str) -> String {
+        match self.ssh_workspaces.get(workspace_id) {
+            Some(machine) if key == LOCAL_KEY => machine.clone(),
+            _ => key.to_string(),
         }
+    }
+
+    /// Stream the panes of the window's shown tab: a new tab replaces the streams, a stream
+    /// that ended is restarted in place.
+    fn show_panes(&mut self, id: WinId) -> io::Result<()> {
+        let Some(data) = self.data.get(&id) else {
+            return Ok(());
+        };
+        let key = data.target.clone();
+        let want: Vec<String> = data
+            .active_tab()
+            .map(|t| vec![t.terminal_id.clone()])
+            .unwrap_or_default();
+        let rects = self.pane_rects(id, want.len());
+        let size = |i: usize| {
+            rects
+                .get(i)
+                .map_or((1, 1), |r| (r.width.max(1), r.height.max(1)))
+        };
+        let same = data.panes.iter().map(|p| &p.terminal_id).eq(want.iter());
+        if !same {
+            let mut panes = Vec::new();
+            for (i, terminal_id) in want.iter().enumerate() {
+                let (cols, rows) = size(i);
+                panes.push(PaneView {
+                    terminal_id: terminal_id.clone(),
+                    session: None,
+                    master: 0,
+                    mirror: Mirror::new(cols, rows)?,
+                    sent_size: (cols, rows),
+                });
+            }
+            if let Some(data) = self.data.get_mut(&id) {
+                data.release();
+                data.panes = panes;
+            }
+        }
+        let mut result = Ok(());
+        for (i, terminal_id) in want.iter().enumerate() {
+            let down = self
+                .data
+                .get(&id)
+                .and_then(|d| d.panes.get(i))
+                .is_some_and(|p| p.session.is_none());
+            if !down {
+                continue;
+            }
+            let started = self.spawn_session(id, &key, terminal_id, size(i));
+            match started {
+                Ok((session, master)) => {
+                    if let Some(pane) = self.data.get_mut(&id).and_then(|d| d.panes.get_mut(i)) {
+                        pane.session = Some(session);
+                        pane.master = master;
+                        pane.sent_size = size(i);
+                    }
+                }
+                Err(err) => result = Err(err),
+            }
+        }
+        result
     }
 
     /// `desk.json` keys of open windows.
     fn state_keys(&self) -> HashMap<WinId, String> {
         self.data
             .iter()
-            .map(|(id, data)| (*id, state::key(&data.target, &data.info.terminal_id)))
+            .map(|(id, data)| (*id, state::key(&data.target, &data.workspace.workspace_id)))
             .collect()
     }
 
-    fn win_id(&self, key: &str, tab_id: &str) -> Option<WinId> {
+    fn win_id(&self, key: &str, workspace_id: &str) -> Option<WinId> {
         self.data
             .iter()
-            .find(|(_, data)| data.target == key && data.info.tab_id == tab_id)
+            .find(|(_, data)| data.target == key && data.workspace.workspace_id == workspace_id)
             .map(|(id, _)| *id)
     }
 
-    /// The focused window's **Task**, else the first local one.
-    fn current_task(&self) -> Option<TaskRef> {
+    /// The focused window's **Task**, else Local.
+    fn current_task(&self) -> String {
         self.desk
             .focus
             .and_then(|id| self.data.get(&id))
-            .map(|data| (data.target.clone(), data.info.workspace_id.clone()))
-            .or_else(|| {
-                self.tasks
-                    .iter()
-                    .find(|t| t.target == LOCAL_KEY)
-                    .map(|t| (t.target.clone(), t.info.workspace_id.clone()))
-            })
+            .map_or_else(|| LOCAL_KEY.to_string(), |data| data.task.clone())
     }
 
-    /// New window in the current **Task**; creates a local **Task** when there is none.
+    /// New window in the current **Task**.
     fn new_window(&mut self) {
-        let created = match self.current_task() {
-            Some((key, ws)) => self.new_window_in(&key, &ws),
-            None => self.new_task(LOCAL_KEY, None),
+        let task = self.current_task();
+        self.new_window_on(&task);
+    }
+
+    /// New window (workspace) in the **Task** of `key`; an **SSH Tier** **Machine** gets an
+    /// `ssh` window.
+    fn new_window_on(&mut self, key: &str) {
+        let Some(state) = self.targets.iter().find(|t| t.target.key() == key) else {
+            return;
         };
+        if !state.connected {
+            if matches!(state.target, Target::Machine(_)) {
+                self.open_ssh(key);
+            }
+            return;
+        }
+        let target = state.target.clone();
+        let created = server::create_workspace(&target, None)
+            .and_then(|(workspace, tab)| self.attach(key, workspace, vec![tab], None));
         if let Err(err) = created {
             self.notice = Some(format!("new window failed: {err}"));
         }
     }
 
-    fn new_window_in(&mut self, key: &str, ws: &str) -> io::Result<WinId> {
-        let target = self
-            .target(key)
-            .cloned()
-            .ok_or_else(|| io::Error::other("machine not connected"))?;
-        let info = server::create_window(&target, ws)?;
-        self.attach(key, info, None)
+    /// New tab in a window, shown at once; an `ssh` window's tab runs `ssh` too.
+    fn new_tab(&mut self, id: WinId) {
+        let Some(data) = self.data.get(&id) else {
+            return;
+        };
+        let (key, task, workspace_id) = (
+            data.target.clone(),
+            data.task.clone(),
+            data.workspace.workspace_id.clone(),
+        );
+        let Some(target) = self.target(&key).cloned() else {
+            return;
+        };
+        let tab = match server::create_tab(&target, &workspace_id) {
+            Ok(tab) => tab,
+            Err(err) => {
+                self.notice = Some(format!("new tab failed: {err}"));
+                return;
+            }
+        };
+        if task != key {
+            if let Some(Target::Machine(machine)) = self.target(&task) {
+                let command = format!("ssh {}", transport::quote(&machine.target));
+                server::run_in_pane(&target, &tab.pane_id, &command);
+            }
+        }
+        let tab_id = tab.tab_id.clone();
+        if let Some(data) = self.data.get_mut(&id) {
+            data.tabs.push(tab);
+        }
+        self.select_tab(id, &tab_id);
     }
 
-    fn new_task(&mut self, key: &str, label: Option<&str>) -> io::Result<WinId> {
-        let target = self
-            .target(key)
-            .cloned()
-            .ok_or_else(|| io::Error::other("machine not connected"))?;
-        let (task, info) = server::create_task(&target, label)?;
-        self.tasks.push(Task {
-            target: key.to_string(),
-            info: task,
-        });
-        self.sort_tasks();
-        self.attach(key, info, None)
+    /// Show a tab in its window and on the **Server** (`tab focus`, plan decision 2).
+    fn select_tab(&mut self, id: WinId, tab_id: &str) {
+        let Some(data) = self.data.get_mut(&id) else {
+            return;
+        };
+        if data.workspace.active_tab_id == tab_id {
+            return;
+        }
+        data.workspace.active_tab_id = tab_id.to_string();
+        let key = data.target.clone();
+        if let Some(target) = self.target(&key) {
+            server::focus_tab(target, tab_id);
+        }
+        if let Err(err) = self.show_panes(id) {
+            self.notice = Some(format!("open tab failed: {err}"));
+        }
+        self.refresh_title(id);
     }
 
-    /// Local **Tasks** first, then each **Machine**'s in Machines Folder order.
-    fn sort_tasks(&mut self) {
-        let order: Vec<String> = self
-            .targets
-            .iter()
-            .map(|t| t.target.key().to_string())
-            .collect();
-        self.tasks.sort_by_key(|t| {
-            order
-                .iter()
-                .position(|k| *k == t.target)
-                .unwrap_or(usize::MAX)
-        });
+    fn close_tab(&mut self, id: WinId, tab_id: &str) {
+        let Some(data) = self.data.get_mut(&id) else {
+            return;
+        };
+        if data.tabs.len() <= 1 {
+            self.close_window_now(id);
+            return;
+        }
+        let index = data.tabs.iter().position(|t| t.tab_id == tab_id);
+        let Some(index) = index else {
+            return;
+        };
+        data.tabs.remove(index);
+        if data.workspace.active_tab_id == tab_id {
+            let next = data.tabs[index.min(data.tabs.len() - 1)].tab_id.clone();
+            data.workspace.active_tab_id = next;
+        }
+        let key = data.target.clone();
+        if let Some(target) = self.target(&key) {
+            server::close_tab(target, tab_id);
+        }
+        if let Err(err) = self.show_panes(id) {
+            self.notice = Some(format!("open tab failed: {err}"));
+        }
+        self.refresh_title(id);
     }
 
-    /// Reconcile one **Target**'s windows with its server state: new tabs open, closed tabs go,
-    /// labels follow, windows whose stream ended reattach in place.
+    /// Reconcile one **Target**'s windows with its server state: new workspaces open, closed
+    /// ones go, tabs and labels follow, streams that ended restart in place.
     fn apply(&mut self, key: &str, snap: Snapshot) {
         match self.target_state(key) {
             // A late snapshot from a stopped watcher.
@@ -460,29 +603,29 @@ impl App {
             }
             None => return,
         }
-        self.tasks.retain(|t| t.target != key);
-        self.tasks.extend(snap.tasks.into_iter().map(|info| Task {
-            target: key.to_string(),
-            info,
-        }));
-        self.sort_tasks();
-        for info in snap.windows.iter().cloned() {
-            match self.win_id(key, &info.tab_id) {
-                Some(id) if self.data[&id].info.terminal_id == info.terminal_id => {
+        for workspace in &snap.workspaces {
+            let tabs: Vec<TabInfo> = snap
+                .tabs
+                .iter()
+                .filter(|t| t.workspace_id == workspace.workspace_id)
+                .cloned()
+                .collect();
+            if tabs.is_empty() {
+                continue;
+            }
+            match self.win_id(key, &workspace.workspace_id) {
+                Some(id) => {
                     if let Some(data) = self.data.get_mut(&id) {
-                        data.info = info;
+                        data.workspace = workspace.clone();
+                        data.tabs = tabs;
                     }
-                    if self.data[&id].session.is_none() {
-                        self.reattach(id);
+                    if let Err(err) = self.show_panes(id) {
+                        tracing::warn!(%err, "desk: reattach failed");
                     }
                     self.refresh_title(id);
                 }
-                found => {
-                    let rect = found.and_then(|id| self.desk.get(id).map(|w| w.rect));
-                    if let Some(id) = found {
-                        self.drop_window(id);
-                    }
-                    if let Err(err) = self.attach(key, info, rect) {
+                None => {
+                    if let Err(err) = self.attach(key, workspace.clone(), tabs, None) {
                         self.notice = Some(format!("open window failed: {err}"));
                     }
                 }
@@ -496,15 +639,26 @@ impl App {
             .filter(|(_, data)| {
                 data.target == key
                     && data.attached_at.elapsed() > grace
-                    && !snap.windows.iter().any(|w| w.tab_id == data.info.tab_id)
+                    && !snap
+                        .workspaces
+                        .iter()
+                        .any(|w| w.workspace_id == data.workspace.workspace_id)
             })
             .map(|(id, _)| *id)
             .collect();
         for id in gone {
             self.drop_window(id);
         }
+        if key == LOCAL_KEY {
+            let open: Vec<String> = self
+                .data
+                .values()
+                .filter(|d| d.target == LOCAL_KEY)
+                .map(|d| d.workspace.workspace_id.clone())
+                .collect();
+            self.ssh_workspaces.retain(|ws, _| open.contains(ws));
+        }
     }
-
     /// A poll failed: keep the windows, show the link state.
     fn set_link(&mut self, key: &str, link: Link) {
         if let Some(state) = self.target_state(key) {
@@ -572,30 +726,59 @@ impl App {
         }
     }
 
-    /// **SSH Tier**: a new window in the local **Task** named after the **Machine**, running
-    /// `ssh <target>` (plan decision 3A).
+    /// **SSH Tier**: a new local window named after the **Machine**, running `ssh <target>`,
+    /// in the **Machine**'s **Task** (plan decision 3A of B15).
     fn open_ssh(&mut self, key: &str) {
         let Some(Target::Machine(machine)) = self.target(key).cloned() else {
             return;
         };
-        let task = self
-            .tasks
-            .iter()
-            .find(|t| t.target == LOCAL_KEY && t.info.label == machine.label)
-            .map(|t| t.info.workspace_id.clone());
-        let opened = match task {
-            Some(ws) => self.new_window_in(LOCAL_KEY, &ws),
-            None => self.new_task(LOCAL_KEY, Some(&machine.label)),
-        };
+        let opened = server::create_workspace(&Target::Local, Some(&machine.label)).and_then(
+            |(workspace, tab)| {
+                self.ssh_workspaces
+                    .insert(workspace.workspace_id.clone(), key.to_string());
+                let pane = tab.pane_id.clone();
+                self.attach(LOCAL_KEY, workspace, vec![tab], None)
+                    .map(|_| pane)
+            },
+        );
         match opened {
-            Ok(id) => {
-                if let Some(pane) = self.data.get(&id).map(|d| d.info.pane_id.clone()) {
-                    let command = format!("ssh {}", transport::quote(&machine.target));
-                    server::run_in_pane(&Target::Local, &pane, &command);
-                }
+            Ok(pane) => {
+                let command = format!("ssh {}", transport::quote(&machine.target));
+                server::run_in_pane(&Target::Local, &pane, &command);
             }
             Err(err) => self.notice = Some(format!("ssh window failed: {err}")),
         }
+    }
+
+    /// Windows in the **Task** of `key`, in stacking order.
+    fn task_windows(&self, key: &str) -> Vec<WinId> {
+        self.desk
+            .windows
+            .iter()
+            .map(|w| w.id)
+            .filter(|id| self.data.get(id).is_some_and(|d| d.task == key))
+            .collect()
+    }
+
+    /// **Taskbar** buttons: Local, then each connected **Machine** or one with windows.
+    fn task_keys(&self) -> Vec<String> {
+        self.targets
+            .iter()
+            .map(|t| t.target.key())
+            .filter(|key| {
+                *key == LOCAL_KEY
+                    || self
+                        .targets
+                        .iter()
+                        .any(|t| t.target.key() == *key && t.connected)
+                    || self.data.values().any(|d| d.task == *key)
+            })
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn label(&self, key: &str) -> String {
+        self.target(key).map_or(key, Target::label).to_string()
     }
 
     /// Rows of the **Machines Folder**, in `targets` order.
@@ -603,11 +786,7 @@ impl App {
         self.targets
             .iter()
             .map(|t| {
-                let windows = self
-                    .data
-                    .values()
-                    .filter(|d| d.target == t.target.key())
-                    .count();
+                let windows = self.task_windows(t.target.key()).len();
                 let (target, status) = match &t.target {
                     Target::Local => ("this computer".to_string(), "Local".to_string()),
                     Target::Machine(m) => (m.target.clone(), t.link.text().to_string()),
@@ -651,14 +830,7 @@ impl App {
             (Link::Connecting, _) => {}
             (_, true) => {
                 // Connected (or Local): bring its windows forward.
-                let ids: Vec<WinId> = self
-                    .desk
-                    .windows
-                    .iter()
-                    .map(|w| w.id)
-                    .filter(|id| self.data.get(id).is_some_and(|d| d.target == key))
-                    .collect();
-                for id in ids {
+                for id in self.task_windows(key) {
                     self.desk.raise(id);
                 }
             }
@@ -668,7 +840,6 @@ impl App {
             }
         }
     }
-
     fn folder_menu(&self, index: usize, at: (u16, u16)) -> Option<Menu<Action>> {
         let state = self.targets.get(index)?;
         let key = state.target.key().to_string();
@@ -715,7 +886,8 @@ impl App {
         }
     }
 
-    /// Stop polling a **Machine** and close its windows; its tabs stay on its **Server**.
+    /// Stop following a **Machine** and close its windows; its workspaces stay on its
+    /// **Server**.
     fn disconnect(&mut self, key: &str) {
         let Some(state) = self.target_state(key) else {
             return;
@@ -736,17 +908,13 @@ impl App {
         let captured = state::capture(&self.desk, |id| {
             ids.contains(&id).then(|| keys.get(&id).cloned()).flatten()
         });
-        self.saved.windows.retain(|s| {
-            !captured
-                .windows
-                .iter()
-                .any(|c| c.terminal_id == s.terminal_id)
-        });
+        self.saved
+            .windows
+            .retain(|s| !captured.windows.iter().any(|c| c.workspace == s.workspace));
         self.saved.windows.extend(captured.windows);
         for id in ids {
             self.drop_window(id);
         }
-        self.tasks.retain(|t| t.target != key);
     }
 
     /// `desk.json` contents: open windows, plus saved windows of **Machines** not connected now.
@@ -764,8 +932,8 @@ impl App {
             .windows
             .iter()
             .filter(|s| {
-                state::key_machine(&s.terminal_id).is_some_and(|m| !connected.contains(&m))
-                    && !out.windows.iter().any(|o| o.terminal_id == s.terminal_id)
+                state::key_machine(&s.workspace).is_some_and(|m| !connected.contains(&m))
+                    && !out.windows.iter().any(|o| o.workspace == s.workspace)
             })
             .cloned()
             .collect();
@@ -776,67 +944,90 @@ impl App {
             .filter(|key| *key != LOCAL_KEY)
             .map(str::to_string)
             .collect();
+        out.ssh_workspaces = self.ssh_workspaces.clone();
         out
     }
 
-    fn window_title(&self, key: &str, info: &WindowInfo, offline: bool) -> String {
-        let mut title = window_title(info);
-        if key != LOCAL_KEY {
-            let host = self.target(key).map_or(key, Target::label);
-            title = format!("{host}: {title}");
-        }
-        if offline {
-            title = format!("⚠ {title}");
-        }
-        title
-    }
-
+    /// The workspace name; a **Machine**'s windows carry its name, an unreachable one `⚠`.
     fn refresh_title(&mut self, id: WinId) {
         let Some(data) = self.data.get(&id) else {
             return;
         };
-        let offline =
-            data.session.is_none() || matches!(self.link(&data.target), Link::Offline | Link::Auth);
-        let title = self.window_title(&data.target, &data.info, offline);
+        let mut title = data.workspace.label.clone();
+        if let Some(n) = data.active_tab().map(|t| t.other_panes).filter(|n| *n > 0) {
+            title = format!("{title} (+{n} panes)");
+        }
+        if data.target != LOCAL_KEY {
+            title = format!("{}: {title}", self.label(&data.target));
+        }
+        let offline = data.panes.iter().any(|p| p.session.is_none())
+            || matches!(self.link(&data.target), Link::Offline | Link::Auth);
+        if offline {
+            title = format!("⚠ {title}");
+        }
         if let Some(w) = self.desk.get_mut(id) {
             w.title = title;
         }
     }
 
-    /// Remove a window from the desk; its tab stays on the server.
+    /// Remove a window from the desk; its workspace stays on the server.
     fn drop_window(&mut self, id: WinId) {
         self.desk.close(id);
-        if let Some(session) = self.data.remove(&id).and_then(|data| data.session) {
-            session.release();
+        if let Some(mut data) = self.data.remove(&id) {
+            data.release();
         }
     }
 
+    /// `[×]`: closes the workspace, after asking when it has more than one tab.
     fn close_window(&mut self, id: WinId) {
+        let tabs = self.data.get(&id).map_or(0, |d| d.tabs.len());
+        if tabs > 1 {
+            let label = self
+                .data
+                .get(&id)
+                .map(|d| d.workspace.label.clone())
+                .unwrap_or_default();
+            self.dialog = Some(Dialog::confirm(
+                "Close window",
+                format!("Close {label} and its {tabs} tabs?"),
+                "Close",
+                DialogTarget::CloseWindow(id),
+            ));
+            return;
+        }
+        self.close_window_now(id);
+    }
+
+    fn close_window_now(&mut self, id: WinId) {
         self.desk.close(id);
         if self.folder.is_some_and(|f| f.win == id) {
             self.folder = None;
         }
-        if let Some(data) = self.data.remove(&id) {
-            if let Some(session) = data.session {
-                session.release();
-            }
+        if let Some(mut data) = self.data.remove(&id) {
+            data.release();
+            self.ssh_workspaces.remove(&data.workspace.workspace_id);
             if let Some(target) = self.target(&data.target) {
-                server::close_window(target, &data.info.tab_id);
+                server::close_workspace(target, &data.workspace.workspace_id);
             }
         }
     }
 
-    /// Send a resize for every window whose content size changed since the last one sent.
+    /// Send a resize for every pane whose size changed since the last one sent.
     fn sync_sizes(&mut self) {
-        for w in &self.desk.windows {
-            let inner = w.inner();
-            let size = (inner.width, inner.height);
-            if size.0 == 0 || size.1 == 0 {
+        let ids: Vec<WinId> = self.desk.windows.iter().map(|w| w.id).collect();
+        for id in ids {
+            let count = self.data.get(&id).map_or(0, |d| d.panes.len());
+            let rects = self.pane_rects(id, count);
+            let Some(data) = self.data.get_mut(&id) else {
                 continue;
-            }
-            if let Some(data) = self.data.get_mut(&w.id) {
-                if let (true, Some(session)) = (data.sent_size != size, data.session.as_mut()) {
-                    data.sent_size = size;
+            };
+            for (pane, rect) in data.panes.iter_mut().zip(rects) {
+                let size = (rect.width, rect.height);
+                if size.0 == 0 || size.1 == 0 || pane.sent_size == size {
+                    continue;
+                }
+                if let Some(session) = pane.session.as_mut() {
+                    pane.sent_size = size;
                     session.resize(size.0, size.1);
                 }
             }
@@ -852,24 +1043,29 @@ impl App {
             }
             DeskEvent::Frame {
                 win,
+                serial,
                 width,
                 height,
                 bytes,
             } => {
                 self.stats.frames += 1;
                 self.stats.frame_bytes += bytes.len() as u64;
-                if let Some(data) = self.data.get_mut(&win) {
-                    data.mirror.feed(width, height, &bytes);
+                if let Some(pane) = self
+                    .data
+                    .get_mut(&win)
+                    .and_then(|d| d.pane_by_serial(serial))
+                {
+                    pane.mirror.feed(width, height, &bytes);
                 }
             }
-            // The stream ended: keep the window until the next snapshot says whether its tab
-            // is gone (drop) or still there (reattach in place).
+            // The stream ended: keep the window until the next snapshot says whether its
+            // workspace is gone (drop) or still there (restart in place).
             DeskEvent::Closed(win, serial) => {
                 let ended = self
                     .data
                     .get_mut(&win)
-                    .filter(|d| d.session.as_ref().is_some_and(|s| s.serial == serial))
-                    .and_then(|d| d.session.take());
+                    .and_then(|d| d.pane_by_serial(serial))
+                    .and_then(|p| p.session.take());
                 if let Some(session) = ended {
                     session.release();
                     self.refresh_title(win);
@@ -969,19 +1165,19 @@ impl App {
         self.forward_input(chunk);
     }
 
+    /// The stream of the window's pane under input.
+    fn session(&mut self, id: WinId) -> Option<&mut Session> {
+        self.data.get_mut(&id)?.panes.first_mut()?.session.as_mut()
+    }
+
     fn forward_input(&mut self, bytes: &[u8]) {
-        if let Some(session) = self
-            .desk
-            .focus
-            .and_then(|id| self.data.get_mut(&id))
-            .and_then(|data| data.session.as_mut())
-        {
+        if let Some(session) = self.desk.focus.and_then(|id| self.session(id)) {
             session.input(bytes);
         }
     }
 
     fn content_point(&self, id: WinId, column: u16, row: u16) -> Option<(u16, u16)> {
-        let inner = self.desk.get(id)?.inner();
+        let inner = *self.pane_rects(id, 1).first()?;
         let x = column
             .checked_sub(inner.x)?
             .min(inner.width.saturating_sub(1));
@@ -995,7 +1191,7 @@ impl App {
         let Some((x, y)) = self.content_point(id, column, row) else {
             return;
         };
-        if let Some(session) = self.data.get_mut(&id).and_then(|d| d.session.as_mut()) {
+        if let Some(session) = self.session(id) {
             session.mouse(action, button, x, y, 0);
         }
     }
@@ -1078,6 +1274,22 @@ impl App {
                         self.sync_sizes();
                     }
                     (Some(Hit::Close(id)), MouseButton::Left) => self.close_window(id),
+                    (Some(Hit::Tab(id, index)), MouseButton::Left) => {
+                        let tab = self.tab_id(id, index);
+                        if let Some(tab) = tab {
+                            self.select_tab(id, &tab);
+                        }
+                    }
+                    (Some(Hit::Tab(id, index)), MouseButton::Right) => {
+                        self.menu = self.tab_menu(id, index, (column, row));
+                    }
+                    (Some(Hit::TabClose(id, index)), MouseButton::Left) => {
+                        let tab = self.tab_id(id, index);
+                        if let Some(tab) = tab {
+                            self.close_tab(id, &tab);
+                        }
+                    }
+                    (Some(Hit::NewTab(id)), MouseButton::Left) => self.new_tab(id),
                     (Some(Hit::FolderRow(index)), button) => {
                         if let Some(f) = self.folder.as_mut() {
                             self.desk.raise(f.win);
@@ -1182,9 +1394,7 @@ impl App {
                 if let Some(Hit::Content(id)) = self.hits.hit(column, row) {
                     let up = mouse.kind == MouseEventKind::ScrollUp;
                     if let Some((x, y)) = self.content_point(id, column, row) {
-                        if let Some(session) =
-                            self.data.get_mut(&id).and_then(|d| d.session.as_mut())
-                        {
+                        if let Some(session) = self.session(id) {
                             session.scroll(up, x, y);
                         }
                     }
@@ -1230,8 +1440,25 @@ impl App {
                 .border_style(border)
                 .render(rect, frame.buffer_mut());
             let inner = wm::inner(rect);
+            let mut tab_hits = Vec::new();
             if let Some(data) = self.data.get(&w.id) {
-                data.mirror.render(frame, inner, focused);
+                let area = content_area(inner);
+                if let Some(pane) = data.panes.first() {
+                    pane.mirror.render(frame, area, focused);
+                }
+                render_tabs(
+                    data,
+                    w.id,
+                    focused,
+                    tab_strip(inner),
+                    frame.buffer_mut(),
+                    |r, h| {
+                        tab_hits.push((r, h));
+                    },
+                );
+                hits.push(area, Hit::Content(w.id));
+            } else {
+                hits.push(inner, Hit::Content(w.id));
             }
             let folder_rows = match (self.folder, &folder_rows) {
                 (Some(f), Some(rows)) if f.win == w.id => Some((f.selected, rows)),
@@ -1258,7 +1485,9 @@ impl App {
                 usize::from(title_w),
                 title_style,
             );
-            hits.push(inner, Hit::Content(w.id));
+            for (rect, hit) in tab_hits {
+                hits.push(rect, hit);
+            }
             for (rect, i) in row_hits {
                 hits.push(rect, Hit::FolderRow(i));
             }
@@ -1303,19 +1532,10 @@ impl App {
             buf.set_style(bar, Style::default().bg(BAR_BG).fg(Color::White));
             hits.push(bar, Hit::Bar);
             let current = self.current_task();
-            let texts: Vec<String> = self
-                .tasks
+            let keys = self.task_keys();
+            let texts: Vec<String> = keys
                 .iter()
-                .map(|task| {
-                    let count = self
-                        .data
-                        .values()
-                        .filter(|d| {
-                            d.target == task.target && d.info.workspace_id == task.info.workspace_id
-                        })
-                        .count();
-                    taskbar::task_text(&self.task_title(task), count)
-                })
+                .map(|key| taskbar::task_text(&self.label(key), self.task_windows(key).len()))
                 .collect();
             let layout = taskbar::layout(bar, self.bar.edge, texts);
             let start_style = if self.menu.as_ref().is_some_and(|m| m.title == START_TITLE) {
@@ -1335,10 +1555,7 @@ impl App {
             );
             hits.push(layout.start, Hit::Start);
             for (index, button) in layout.buttons.iter().enumerate() {
-                let task = &self.tasks[index];
-                let active = current
-                    .as_ref()
-                    .is_some_and(|(key, ws)| *key == task.target && *ws == task.info.workspace_id);
+                let active = keys.get(index) == Some(&current);
                 let style = if active {
                     Style::default().bg(FOCUS_BORDER).fg(Color::Black)
                 } else {
@@ -1395,86 +1612,73 @@ impl App {
             WinState::Maximized { .. } => "Restore size",
             WinState::Normal => "Maximize",
         };
+        let mut items = Vec::new();
+        if self.data.contains_key(&id) {
+            items.push(MenuItem::new("Rename…", "", Action::RenameWindow(id)));
+            items.push(MenuItem::new("New tab", "", Action::NewTab(id)));
+        }
+        items.extend([
+            MenuItem::new("Minimize", "^\\ z", Action::Minimize(id)),
+            MenuItem::new(maximize, "^\\ m", Action::ToggleMaximize(id)),
+            MenuItem::new("Close", "^\\ w", Action::Close(id)),
+        ]);
+        Menu::open(w.title.clone(), at, items)
+    }
+
+    fn tab_id(&self, id: WinId, index: usize) -> Option<String> {
+        Some(self.data.get(&id)?.tabs.get(index)?.tab_id.clone())
+    }
+
+    fn tab_menu(&self, id: WinId, index: usize, at: (u16, u16)) -> Option<Menu<Action>> {
+        let tab = self.data.get(&id)?.tabs.get(index)?;
         Menu::open(
-            w.title.clone(),
+            tab.label.clone(),
             at,
             vec![
-                MenuItem::new("Rename…", "", Action::RenameWindow(id)),
-                MenuItem::new("Minimize", "^\\ z", Action::Minimize(id)),
-                MenuItem::new(maximize, "^\\ m", Action::ToggleMaximize(id)),
-                MenuItem::new("Close", "^\\ w", Action::Close(id)),
+                MenuItem::new("Rename tab…", "", Action::RenameTab(id, tab.tab_id.clone())),
+                MenuItem::new("Close tab", "", Action::CloseTab(id, tab.tab_id.clone())),
             ],
         )
     }
 
     /// Left click on a Task button: its windows, minimized ones marked.
     fn task_windows_menu(&self, index: usize, at: (u16, u16)) -> Option<Menu<Action>> {
-        let task = self.tasks.get(index)?;
+        let key = self.task_keys().into_iter().nth(index)?;
         let items = self
-            .desk
-            .windows
-            .iter()
-            .filter(|w| {
-                self.data.get(&w.id).is_some_and(|d| {
-                    d.target == task.target && d.info.workspace_id == task.info.workspace_id
-                })
-            })
+            .task_windows(&key)
+            .into_iter()
+            .filter_map(|id| self.desk.get(id))
             .map(|w| {
                 let mark = if w.minimized { "▁ " } else { "  " };
                 MenuItem::new(format!("{mark}{}", w.title), "", Action::Raise(w.id))
             })
             .collect();
-        Menu::open(self.task_title(task), at, items).map(Menu::above)
+        Menu::open(self.label(&key), at, items).map(Menu::above)
     }
 
     fn task_menu(&self, index: usize, at: (u16, u16)) -> Option<Menu<Action>> {
-        let task = self.tasks.get(index)?;
-        let ws: TaskRef = (task.target.clone(), task.info.workspace_id.clone());
-        Menu::open(
-            self.task_title(task),
-            at,
-            vec![
-                MenuItem::new("Rename…", "", Action::RenameTask(ws.clone())),
-                MenuItem::new("New window", "", Action::NewWindowIn(ws.clone())),
-                MenuItem::new("Minimize all", "", Action::MinimizeTask(ws.clone())),
-                MenuItem::new("Restore all", "", Action::RestoreTask(ws.clone())),
-                MenuItem::new("Close task…", "", Action::CloseTask(ws.clone())),
-            ],
-        )
-        .map(Menu::above)
-    }
-
-    fn task_windows(&self, (key, ws): &TaskRef) -> Vec<WinId> {
-        self.desk
-            .windows
-            .iter()
-            .map(|w| w.id)
-            .filter(|id| {
-                self.data
-                    .get(id)
-                    .is_some_and(|d| d.target == *key && d.info.workspace_id == *ws)
-            })
-            .collect()
-    }
-
-    fn find_task(&self, (key, ws): &TaskRef) -> Option<&Task> {
-        self.tasks
-            .iter()
-            .find(|t| t.target == *key && t.info.workspace_id == *ws)
-    }
-
-    fn task_label(&self, task: &TaskRef) -> String {
-        self.find_task(task)
-            .map(|t| t.info.label.clone())
-            .unwrap_or_default()
-    }
-
-    /// Taskbar text of a **Task**: remote ones carry the **Machine** name.
-    fn task_title(&self, task: &Task) -> String {
-        match self.target(&task.target) {
-            Some(target @ Target::Machine(_)) => format!("{}: {}", target.label(), task.info.label),
-            _ => task.info.label.clone(),
+        let key = self.task_keys().into_iter().nth(index)?;
+        let mut items = vec![
+            MenuItem::new("New window", "", Action::NewWindowOn(key.clone())),
+            MenuItem::new("Minimize all", "", Action::MinimizeTask(key.clone())),
+            MenuItem::new("Restore all", "", Action::RestoreTask(key.clone())),
+        ];
+        if let Some(state) = self.targets.iter().find(|t| t.target.key() == key) {
+            match (&state.target, state.connected) {
+                (Target::Local, _) => {}
+                (Target::Machine(_), true) => {
+                    items.push(MenuItem::new(
+                        "Disconnect",
+                        "",
+                        Action::Disconnect(key.clone()),
+                    ));
+                }
+                (Target::Machine(_), false) => {
+                    items.push(MenuItem::new("Connect", "", Action::Connect(key.clone())));
+                }
+            }
         }
+        Menu::open(self.label(&key), at, items).map(Menu::above)
     }
 
     /// `omarchy ! offline · ` for connected **Machines** that are not reachable.
@@ -1500,18 +1704,31 @@ impl App {
                 if let Some(data) = self.data.get(&id) {
                     self.dialog = Some(Dialog::input(
                         "Rename window",
-                        &data.info.label,
+                        &data.workspace.label,
                         "Rename",
                         DialogTarget::RenameWindow(id),
                     ));
                 }
             }
-            Action::NewWindow => self.new_window(),
-            Action::NewTask => {
-                if let Err(err) = self.new_task(LOCAL_KEY, None) {
-                    self.notice = Some(format!("new task failed: {err}"));
+            Action::NewTab(id) => self.new_tab(id),
+            Action::RenameTab(id, tab_id) => {
+                let label = self
+                    .data
+                    .get(&id)
+                    .and_then(|d| d.tabs.iter().find(|t| t.tab_id == tab_id))
+                    .map(|t| t.label.clone());
+                if let Some(label) = label {
+                    self.dialog = Some(Dialog::input(
+                        "Rename tab",
+                        &label,
+                        "Rename",
+                        DialogTarget::RenameTab(id, tab_id),
+                    ));
                 }
             }
+            Action::CloseTab(id, tab_id) => self.close_tab(id, &tab_id),
+            Action::NewWindow => self.new_window(),
+            Action::NewWindowOn(key) => self.new_window_on(&key),
             Action::TileAll => {
                 self.desk.tile_all(desk);
                 self.sync_sizes();
@@ -1530,39 +1747,15 @@ impl App {
             }
             Action::Disconnect(key) => self.disconnect(&key),
             Action::OpenSsh(key) => self.open_ssh(&key),
-            Action::NewWindowIn((key, ws)) => {
-                if let Err(err) = self.new_window_in(&key, &ws) {
-                    self.notice = Some(format!("new window failed: {err}"));
-                }
-            }
-            Action::RenameTask(ws) => {
-                let label = self.task_label(&ws);
-                self.dialog = Some(Dialog::input(
-                    "Rename task",
-                    &label,
-                    "Rename",
-                    DialogTarget::RenameTask(ws),
-                ));
-            }
-            Action::MinimizeTask(ws) => {
-                for id in self.task_windows(&ws) {
+            Action::MinimizeTask(key) => {
+                for id in self.task_windows(&key) {
                     self.desk.minimize(id);
                 }
             }
-            Action::RestoreTask(ws) => {
-                for id in self.task_windows(&ws) {
+            Action::RestoreTask(key) => {
+                for id in self.task_windows(&key) {
                     self.desk.raise(id);
                 }
-            }
-            Action::CloseTask(ws) => {
-                let label = self.task_label(&ws);
-                let count = self.task_windows(&ws).len();
-                self.dialog = Some(Dialog::confirm(
-                    "Close task",
-                    format!("Close task {label} and its {count} windows?"),
-                    "Close",
-                    DialogTarget::CloseTask(ws),
-                ));
             }
         }
     }
@@ -1577,35 +1770,26 @@ impl App {
                 let Some(data) = self.data.get_mut(&id) else {
                     return;
                 };
-                data.info.label = text.to_string();
-                let (key, tab_id) = (data.target.clone(), data.info.tab_id.clone());
+                data.workspace.label = text.to_string();
+                let (key, ws) = (data.target.clone(), data.workspace.workspace_id.clone());
                 if let Some(target) = self.target(&key) {
-                    server::rename_window(target, &tab_id, text);
+                    server::rename_workspace(target, &ws, text);
                 }
                 self.refresh_title(id);
             }
-            DialogTarget::RenameTask(task) if !text.is_empty() => {
-                if let Some(target) = self.target(&task.0) {
-                    server::rename_task(target, &task.1, text);
+            DialogTarget::RenameTab(id, tab_id) if !text.is_empty() => {
+                let Some(data) = self.data.get_mut(&id) else {
+                    return;
+                };
+                if let Some(tab) = data.tabs.iter_mut().find(|t| t.tab_id == tab_id) {
+                    tab.label = text.to_string();
                 }
-                if let Some(found) = self
-                    .tasks
-                    .iter_mut()
-                    .find(|t| t.target == task.0 && t.info.workspace_id == task.1)
-                {
-                    found.info.label = text.to_string();
-                }
-            }
-            DialogTarget::CloseTask(task) => {
-                for id in self.task_windows(&task) {
-                    self.drop_window(id);
-                }
-                self.tasks
-                    .retain(|t| !(t.target == task.0 && t.info.workspace_id == task.1));
-                if let Some(target) = self.target(&task.0) {
-                    server::close_task(target, &task.1);
+                let key = data.target.clone();
+                if let Some(target) = self.target(&key) {
+                    server::rename_tab(target, &tab_id, text);
                 }
             }
+            DialogTarget::CloseWindow(id) => self.close_window_now(id),
             _ => {}
         }
     }
@@ -1638,7 +1822,6 @@ fn start_menu() -> Menu<Action> {
     let items = vec![
         MenuItem::new("Machines", "", Action::OpenFolder),
         MenuItem::new("New window", "^\\ n", Action::NewWindow),
-        MenuItem::new("New task", "", Action::NewTask),
         MenuItem::new("Tile all", "^\\ t", Action::TileAll),
         MenuItem::new("Quit desk", "^\\ q", Action::Quit),
     ];
@@ -1651,10 +1834,63 @@ fn start_menu() -> Menu<Action> {
     }
 }
 
-fn window_title(info: &WindowInfo) -> String {
-    match info.other_panes {
-        0 => info.label.clone(),
-        n => format!("{} (+{n} panes)", info.label),
+/// The tab strip: the first row inside a **Terminal Window**.
+fn tab_strip(inner: Rect) -> Rect {
+    Rect::new(inner.x, inner.y, inner.width, inner.height.min(1))
+}
+
+/// Below the tab strip: where the shown tab's panes go.
+fn content_area(inner: Rect) -> Rect {
+    Rect::new(
+        inner.x,
+        inner.y.saturating_add(1).min(inner.bottom()),
+        inner.width,
+        inner.height.saturating_sub(1),
+    )
+}
+
+/// ` label × ` per tab, then ` + `; tabs that do not fit are left out.
+fn render_tabs(
+    data: &WinData,
+    id: WinId,
+    focused: bool,
+    strip: Rect,
+    buf: &mut ratatui::buffer::Buffer,
+    mut push: impl FnMut(Rect, Hit),
+) {
+    if strip.is_empty() {
+        return;
+    }
+    buf.set_style(strip, Style::default().bg(BAR_BG).fg(Color::Gray));
+    let active = data.active_index();
+    let mut x = strip.x;
+    let end = strip.right();
+    for (index, tab) in data.tabs.iter().enumerate() {
+        let label = format!(" {} ", tab.label);
+        let width = super::text_width(&label);
+        if x.saturating_add(width).saturating_add(5) > end {
+            break;
+        }
+        let style = match (index == active, focused) {
+            (true, true) => Style::default().bg(FOCUS_BORDER).fg(Color::Black),
+            (true, false) => Style::default().bg(BLUR_BORDER).fg(Color::Black),
+            (false, _) => Style::default().bg(Color::Indexed(239)).fg(Color::White),
+        };
+        buf.set_string(x, strip.y, &label, style);
+        push(Rect::new(x, strip.y, width, 1), Hit::Tab(id, index));
+        x += width;
+        buf.set_string(x, strip.y, "×", style.fg(Color::LightRed));
+        push(Rect::new(x, strip.y, 1, 1), Hit::TabClose(id, index));
+        x += 2;
+    }
+    if x.saturating_add(3) <= end {
+        buf.set_string(
+            x,
+            strip.y,
+            " + ",
+            Style::default().bg(Color::Indexed(239)).fg(Color::White),
+        );
+        push(Rect::new(x, strip.y, 3, 1), Hit::NewTab(id));
     }
 }
 
@@ -1665,7 +1901,10 @@ fn hit_window(hit: Option<Hit>) -> Option<WinId> {
         | Hit::Handle(id, _)
         | Hit::Minimize(id)
         | Hit::Maximize(id)
-        | Hit::Close(id) => Some(id),
+        | Hit::Close(id)
+        | Hit::Tab(id, _)
+        | Hit::TabClose(id, _)
+        | Hit::NewTab(id) => Some(id),
         _ => None,
     }
 }
@@ -1749,10 +1988,12 @@ pub(super) fn run() -> io::Result<i32> {
         watcher: None,
         connected: false,
     }));
+    let state_path = state::path();
+    let saved = state::load(&state_path);
     let mut app = App {
-        tasks: Vec::new(),
         targets,
         saved: state::DeskState::default(),
+        ssh_workspaces: saved.ssh_workspaces.clone(),
         events: tx.clone(),
         desk: Desk::default(),
         data: HashMap::new(),
@@ -1773,10 +2014,8 @@ pub(super) fn run() -> io::Result<i32> {
         bar: Place::default(),
         bar_drag: None,
     };
-    let reattached = snap.windows.len();
+    let reattached = snap.workspaces.len();
     app.apply(LOCAL_KEY, snap);
-    let state_path = state::path();
-    let saved = state::load(&state_path);
     app.set_bar(saved.taskbar);
     if !saved.windows.is_empty() {
         let area = app.desk_rect();
@@ -1798,10 +2037,8 @@ pub(super) fn run() -> io::Result<i32> {
     spawn_stdin_reader(tx);
     let result = event_loop(&mut app, &mut terminal, &rx, &state_path);
     state::save(&state_path, &app.capture());
-    for (_, data) in app.data.drain() {
-        if let Some(session) = data.session {
-            session.release();
-        }
+    for (_, mut data) in app.data.drain() {
+        data.release();
     }
     drop(terminal);
     drop(guard);
@@ -1951,7 +2188,6 @@ mod tests {
             [
                 Action::OpenFolder,
                 Action::NewWindow,
-                Action::NewTask,
                 Action::TileAll,
                 Action::Quit
             ]
@@ -1973,5 +2209,54 @@ mod tests {
             };
             assert_eq!(gap, 0, "{edge:?}");
         }
+    }
+
+    fn tab(id: &str, label: &str) -> TabInfo {
+        TabInfo {
+            tab_id: id.into(),
+            workspace_id: "w1".into(),
+            label: label.into(),
+            pane_id: format!("{id}-p"),
+            terminal_id: format!("{id}-t"),
+            other_panes: 0,
+        }
+    }
+
+    #[test]
+    fn tab_strip_lists_tabs_with_close_marks_then_new_tab() {
+        let data = WinData {
+            target: LOCAL_KEY.into(),
+            task: LOCAL_KEY.into(),
+            workspace: WorkspaceInfo {
+                workspace_id: "w1".into(),
+                label: "api".into(),
+                active_tab_id: "w1:t2".into(),
+            },
+            tabs: vec![tab("w1:t1", "one"), tab("w1:t2", "two")],
+            attached_at: Instant::now(),
+            panes: Vec::new(),
+        };
+        assert_eq!(data.active_index(), 1);
+        let strip = Rect::new(2, 3, 40, 1);
+        let mut buf = ratatui::buffer::Buffer::empty(Rect::new(0, 0, 50, 5));
+        let mut hits = Vec::new();
+        render_tabs(&data, 7, true, strip, &mut buf, |r, h| hits.push((r.x, h)));
+        assert_eq!(
+            hits,
+            [
+                (2, Hit::Tab(7, 0)),
+                (7, Hit::TabClose(7, 0)),
+                (9, Hit::Tab(7, 1)),
+                (14, Hit::TabClose(7, 1)),
+                (16, Hit::NewTab(7)),
+            ]
+        );
+        // Tabs that do not fit are left out; `+` stays when there is room.
+        let mut hits = Vec::new();
+        render_tabs(&data, 7, true, Rect::new(0, 0, 12, 1), &mut buf, |_, h| {
+            hits.push(h)
+        });
+        assert_eq!(hits, [Hit::Tab(7, 0), Hit::TabClose(7, 0), Hit::NewTab(7)]);
+        assert_eq!(content_area(Rect::new(1, 1, 10, 5)), Rect::new(1, 2, 10, 4));
     }
 }

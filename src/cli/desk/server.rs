@@ -1,5 +1,5 @@
-//! Server state for the desk (ADR 0007): every workspace is a **Task** and every tab a
-//! **Terminal Window** showing the tab's root pane. Reads state over the public API socket
+//! Server state for the desk (ADR 0008): every workspace is a **Terminal Window** whose tab strip
+//! lists its tabs; the **Task** is the **Machine**. Reads state over the public API socket
 //! (`session.snapshot`, `events.subscribe`); changes it with public CLI commands.
 
 use std::io;
@@ -34,26 +34,30 @@ pub(super) const CALL_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) const CONNECT_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct TaskInfo {
+pub(super) struct WorkspaceInfo {
     pub workspace_id: String,
     pub label: String,
+    /// The tab its window shows; follows `tab focus` from any **Client**.
+    pub active_tab_id: String,
 }
 
+/// A tab in a window's tab strip; the window shows its root pane.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct WindowInfo {
+pub(super) struct TabInfo {
     pub tab_id: String,
     pub workspace_id: String,
     pub label: String,
     pub pane_id: String,
     pub terminal_id: String,
-    /// Panes in the tab besides the root pane (not shown on the desk).
+    /// Panes in the tab besides the root pane.
     pub other_panes: usize,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct Snapshot {
-    pub tasks: Vec<TaskInfo>,
-    pub windows: Vec<WindowInfo>,
+    pub workspaces: Vec<WorkspaceInfo>,
+    /// Tabs in server order.
+    pub tabs: Vec<TabInfo>,
 }
 
 /// A failed call: the [`Link`] it implies and the error text.
@@ -199,19 +203,10 @@ pub(super) fn snapshot(target: &Target, timeout: Duration) -> Result<Snapshot, C
     snapshot_at(target, &socket_path(target, timeout)?, timeout)
 }
 
-/// Joins the three list results. A tab's window shows `root_pane_id`; servers without that
+/// Joins the three list results. A tab shows `root_pane_id`; servers without that
 /// field fall back to the tab's first pane without a label (plugin panes carry labels).
 pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Value]) -> Snapshot {
-    let tasks = workspaces
-        .iter()
-        .filter_map(|ws| {
-            Some(TaskInfo {
-                workspace_id: text(ws, "workspace_id")?,
-                label: text(ws, "label").unwrap_or_default(),
-            })
-        })
-        .collect();
-    let windows = tabs
+    let tabs: Vec<TabInfo> = tabs
         .iter()
         .filter_map(|tab| {
             let tab_id = text(tab, "tab_id")?;
@@ -228,7 +223,7 @@ pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Valu
                     .find(|p| p.get("label").is_none_or(Value::is_null))
                     .or(in_tab.first())?,
             };
-            Some(WindowInfo {
+            Some(TabInfo {
                 workspace_id: text(tab, "workspace_id")?,
                 label: text(tab, "label").unwrap_or_default(),
                 pane_id: text(root, "pane_id")?,
@@ -238,7 +233,25 @@ pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Valu
             })
         })
         .collect();
-    Snapshot { tasks, windows }
+    let workspaces = workspaces
+        .iter()
+        .filter_map(|ws| {
+            let workspace_id = text(ws, "workspace_id")?;
+            let active_tab_id = text(ws, "active_tab_id")
+                .filter(|id| tabs.iter().any(|t| t.tab_id == *id))
+                .or_else(|| {
+                    tabs.iter()
+                        .find(|t| t.workspace_id == workspace_id)
+                        .map(|t| t.tab_id.clone())
+                })?;
+            Some(WorkspaceInfo {
+                label: text(ws, "label").unwrap_or_default(),
+                workspace_id,
+                active_tab_id,
+            })
+        })
+        .collect();
+    Snapshot { workspaces, tabs }
 }
 
 /// What wakes a [`spawn_watcher`] thread.
@@ -249,7 +262,7 @@ pub(super) enum Wake {
     Closed(u64),
 }
 
-/// Server events that change desk state: **Tasks**, windows, and root panes.
+/// Server events that change desk state: workspaces, tabs, the shown tab, and panes.
 fn subscriptions() -> Vec<Subscription> {
     vec![
         Subscription::WorkspaceCreated {},
@@ -258,6 +271,7 @@ fn subscriptions() -> Vec<Subscription> {
         Subscription::TabCreated {},
         Subscription::TabClosed {},
         Subscription::TabRenamed {},
+        Subscription::TabFocused {},
         Subscription::TabMoved {},
         Subscription::PaneCreated {},
         Subscription::PaneClosed {},
@@ -423,12 +437,12 @@ fn watch(
     }
 }
 
-fn created_window(value: &Value) -> io::Result<WindowInfo> {
+fn created_tab(value: &Value) -> io::Result<TabInfo> {
     let result = value.get("result").unwrap_or(value);
     let missing = || io::Error::other("create: missing tab or root_pane");
     let tab = result.get("tab").ok_or_else(missing)?;
     let root = result.get("root_pane").ok_or_else(missing)?;
-    Ok(WindowInfo {
+    Ok(TabInfo {
         tab_id: text(tab, "tab_id").ok_or_else(missing)?,
         workspace_id: text(tab, "workspace_id").ok_or_else(missing)?,
         label: text(tab, "label").unwrap_or_default(),
@@ -438,11 +452,11 @@ fn created_window(value: &Value) -> io::Result<WindowInfo> {
     })
 }
 
-/// New **Task** (workspace); returns it and its first window.
-pub(super) fn create_task(
+/// New workspace (a window); returns it and its first tab.
+pub(super) fn create_workspace(
     target: &Target,
     label: Option<&str>,
-) -> io::Result<(TaskInfo, WindowInfo)> {
+) -> io::Result<(WorkspaceInfo, TabInfo)> {
     let mut args = vec!["workspace", "create", "--no-focus"];
     if let Some(label) = label {
         args.extend(["--label", label]);
@@ -452,23 +466,30 @@ pub(super) fn create_task(
     let ws = result
         .get("workspace")
         .ok_or_else(|| io::Error::other("workspace create: missing workspace"))?;
-    let task = TaskInfo {
+    let tab = created_tab(&value)?;
+    let workspace = WorkspaceInfo {
         workspace_id: text(ws, "workspace_id")
             .ok_or_else(|| io::Error::other("workspace create: missing workspace_id"))?,
         label: text(ws, "label").unwrap_or_default(),
+        active_tab_id: tab.tab_id.clone(),
     };
-    Ok((task, created_window(&value)?))
+    Ok((workspace, tab))
 }
 
-pub(super) fn create_window(target: &Target, workspace_id: &str) -> io::Result<WindowInfo> {
-    created_window(&herdr_json(
+pub(super) fn create_tab(target: &Target, workspace_id: &str) -> io::Result<TabInfo> {
+    created_tab(&herdr_json(
         target,
         &["tab", "create", "--workspace", workspace_id, "--no-focus"],
     )?)
 }
 
-pub(super) fn close_window(target: &Target, tab_id: &str) {
+pub(super) fn close_tab(target: &Target, tab_id: &str) {
     run(target, &["tab", "close", tab_id]);
+}
+
+/// Show `tab_id` in its workspace, for every **Client** (plan decision 2).
+pub(super) fn focus_tab(target: &Target, tab_id: &str) {
+    run(target, &["tab", "focus", tab_id]);
 }
 
 /// Run `command` in a pane (the **SSH Tier** window runs `ssh`).
@@ -482,15 +503,15 @@ fn run(target: &Target, args: &[&str]) {
     }
 }
 
-pub(super) fn rename_window(target: &Target, tab_id: &str, label: &str) {
+pub(super) fn rename_tab(target: &Target, tab_id: &str, label: &str) {
     run(target, &["tab", "rename", tab_id, label]);
 }
 
-pub(super) fn rename_task(target: &Target, workspace_id: &str, label: &str) {
+pub(super) fn rename_workspace(target: &Target, workspace_id: &str, label: &str) {
     run(target, &["workspace", "rename", workspace_id, label]);
 }
 
-pub(super) fn close_task(target: &Target, workspace_id: &str) {
+pub(super) fn close_workspace(target: &Target, workspace_id: &str) {
     run(target, &["workspace", "close", workspace_id]);
 }
 
@@ -501,7 +522,7 @@ mod tests {
 
     #[test]
     fn windows_use_root_pane_id_over_layout_order() {
-        let ws = [json!({"workspace_id": "w_1", "label": "api"})];
+        let ws = [json!({"workspace_id": "w_1", "label": "api", "active_tab_id": "w_1:9"})];
         let tabs = [
             json!({"tab_id": "w_1:1", "workspace_id": "w_1", "label": "1",
             "root_pane_id": "w_1-2"}),
@@ -511,9 +532,11 @@ mod tests {
             json!({"pane_id": "w_1-2", "terminal_id": "t2", "tab_id": "w_1:1"}),
         ];
         let snap = build_snapshot(&ws, &tabs, &panes);
-        assert_eq!(snap.tasks.len(), 1);
-        assert_eq!(snap.windows[0].terminal_id, "t2");
-        assert_eq!(snap.windows[0].other_panes, 1);
+        assert_eq!(snap.workspaces.len(), 1);
+        // An unknown active tab falls back to the workspace's first tab.
+        assert_eq!(snap.workspaces[0].active_tab_id, "w_1:1");
+        assert_eq!(snap.tabs[0].terminal_id, "t2");
+        assert_eq!(snap.tabs[0].other_panes, 1);
     }
 
     #[test]
@@ -524,13 +547,13 @@ mod tests {
             json!({"pane_id": "w_1-2", "terminal_id": "t2", "tab_id": "w_1:1", "label": null}),
         ];
         let snap = build_snapshot(&[], &tabs, &panes);
-        assert_eq!(snap.windows[0].pane_id, "w_1-2");
+        assert_eq!(snap.tabs[0].pane_id, "w_1-2");
     }
 
     #[test]
     fn tab_without_panes_has_no_window() {
         let tabs = [json!({"tab_id": "w_1:1", "workspace_id": "w_1", "label": "1"})];
-        assert!(build_snapshot(&[], &tabs, &[]).windows.is_empty());
+        assert!(build_snapshot(&[], &tabs, &[]).tabs.is_empty());
     }
 
     #[test]

@@ -1,5 +1,5 @@
 //! `desk.json` in the Session data directory: window geometry, maximize, minimize, and z-order,
-//! keyed by terminal id. Client presentation state only (ADR 0007).
+//! keyed by workspace id (ADR 0008). Client presentation state only.
 
 use std::path::{Path, PathBuf};
 
@@ -35,7 +35,10 @@ impl From<SavedRect> for Rect {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(super) struct SavedWindow {
-    pub terminal_id: String,
+    /// [`key`] of the window's workspace. Entries of the B14–B23 format (keyed by terminal
+    /// id, without this field) load empty and match no window.
+    #[serde(default)]
+    pub workspace: String,
     pub rect: SavedRect,
     /// Size to restore to when the window was maximized.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,15 +57,19 @@ pub(super) struct DeskState {
     /// **Taskbar** edge and size (B21); bottom, one row when absent.
     #[serde(default, skip_serializing_if = "super::taskbar::Place::is_default")]
     pub taskbar: super::taskbar::Place,
+    /// Local workspaces opened as `ssh` windows of an **SSH Tier** **Machine** (workspace id →
+    /// profile id): the **Machine**'s **Task** holds them.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub ssh_workspaces: std::collections::BTreeMap<String, String>,
 }
 
-/// Key of a window in `desk.json`: the terminal id for local windows (the B14 format), and
-/// `<profile id>/<terminal id>` for a **Machine**'s.
-pub(super) fn key(target: &str, terminal_id: &str) -> String {
+/// Key of a window in `desk.json`: the workspace id for local windows, and
+/// `<profile id>/<workspace id>` for a **Machine**'s.
+pub(super) fn key(target: &str, workspace_id: &str) -> String {
     if target == super::transport::LOCAL_KEY {
-        terminal_id.to_string()
+        workspace_id.to_string()
     } else {
-        format!("{target}/{terminal_id}")
+        format!("{target}/{workspace_id}")
     }
 }
 
@@ -112,15 +119,15 @@ pub(super) fn save(path: &Path, state: &DeskState) {
     }
 }
 
-/// Snapshot `desk` in z-order; `terminal` maps a window to its terminal id.
-pub(super) fn capture(desk: &Desk, terminal: impl Fn(WinId) -> Option<String>) -> DeskState {
+/// Snapshot `desk` in z-order; `key` maps a window to its [`key`].
+pub(super) fn capture(desk: &Desk, key: impl Fn(WinId) -> Option<String>) -> DeskState {
     DeskState {
         windows: desk
             .windows
             .iter()
             .filter_map(|w| {
                 Some(SavedWindow {
-                    terminal_id: terminal(w.id)?,
+                    workspace: key(w.id)?,
                     rect: w.rect.into(),
                     restore: match w.state {
                         WinState::Maximized { restore } => Some(restore.into()),
@@ -130,8 +137,7 @@ pub(super) fn capture(desk: &Desk, terminal: impl Fn(WinId) -> Option<String>) -
                 })
             })
             .collect(),
-        machines: Vec::new(),
-        taskbar: Default::default(),
+        ..DeskState::default()
     }
 }
 
@@ -140,12 +146,11 @@ pub(super) fn capture(desk: &Desk, terminal: impl Fn(WinId) -> Option<String>) -
 pub(super) fn restore(
     desk: &mut Desk,
     state: &DeskState,
-    terminal: impl Fn(WinId) -> Option<String>,
+    key: impl Fn(WinId) -> Option<String>,
     area: Rect,
 ) {
-    let rank = |id: WinId| {
-        terminal(id).and_then(|t| state.windows.iter().position(|s| s.terminal_id == t))
-    };
+    let rank =
+        |id: WinId| key(id).and_then(|k| state.windows.iter().position(|s| s.workspace == k));
     for w in &mut desk.windows {
         if let Some(saved) = rank(w.id).map(|i| &state.windows[i]) {
             apply_saved(w, saved, area);
@@ -212,13 +217,12 @@ mod tests {
         let mut d = desk(2);
         let state = DeskState {
             windows: vec![SavedWindow {
-                terminal_id: "t1".into(),
+                workspace: "t1".into(),
                 rect: Rect::new(500, 500, 10, 10).into(),
                 restore: None,
                 minimized: false,
             }],
-            machines: Vec::new(),
-            taskbar: Default::default(),
+            ..DeskState::default()
         };
         restore(&mut d, &state, term, AREA);
         assert_eq!(d.windows[1].id, 2);
@@ -236,7 +240,14 @@ mod tests {
     }
 
     #[test]
-    fn local_keys_keep_the_b14_format_and_machine_keys_carry_the_profile() {
+    fn entries_keyed_by_terminal_id_load_without_a_key() {
+        let old = r#"{"windows":[{"terminal_id":"t1","rect":{"x":0,"y":0,"width":9,"height":9}}]}"#;
+        let state: DeskState = serde_json::from_str(old).unwrap();
+        assert_eq!(state.windows[0].workspace, "");
+    }
+
+    #[test]
+    fn local_keys_are_bare_and_machine_keys_carry_the_profile() {
         assert_eq!(key("local", "t1"), "t1");
         assert_eq!(key("abc", "t1"), "abc/t1");
         assert_eq!(key_machine("abc/t1"), Some("abc"));
