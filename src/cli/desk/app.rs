@@ -85,7 +85,6 @@ enum Action {
     CloseTab(WinId, String),
     /// New window (workspace) in the **Task** of this **Machine** key.
     NewWindowOn(String),
-    NewWindow,
     TileAll,
     Quit,
     MinimizeTask(String),
@@ -1836,7 +1835,6 @@ impl App {
                 }
             }
             Action::CloseTab(id, tab_id) => self.close_tab(id, &tab_id),
-            Action::NewWindow => self.new_window(),
             Action::NewWindowOn(key) => self.new_window_on(&key),
             Action::TileAll => {
                 self.desk.tile_all(desk);
@@ -1931,7 +1929,6 @@ fn bar_popup<A: Clone>(
 fn start_menu() -> Menu<Action> {
     let items = vec![
         MenuItem::new("Machines", "", Action::OpenFolder),
-        MenuItem::new("New window", "^\\ n", Action::NewWindow),
         MenuItem::new("Tile all", "^\\ t", Action::TileAll),
         MenuItem::new("Quit desk", "^\\ q", Action::Quit),
     ];
@@ -2345,7 +2342,6 @@ mod tests {
             actions,
             [
                 Action::OpenFolder,
-                Action::NewWindow,
                 Action::TileAll,
                 Action::Quit
             ]
