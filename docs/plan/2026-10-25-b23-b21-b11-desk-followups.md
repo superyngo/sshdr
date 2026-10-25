@@ -134,3 +134,27 @@ Owner 2026-10-25 說「都做」，指 B15 報告最後列的三項。順序：B
 | 15 | 12.6% → 9.6% | 2.97 → 3.04 ms |
 
 desk CPU 下降，因為不再每秒開 3 個 CLI 子程序。繪製時間沒有可量測的差異。
+
+### B21（分支 `b21-desk-taskbar`）
+
+| commit | 內容 |
+|---|---|
+| `a4862958 feat: desk taskbar on any edge with adjustable size` | `taskbar.rs` 改成純幾何：`Place{edge,size}`、bar、desk、grip、`layout`、`nearest_edge`；`app.rs` 畫出來並處理點擊，`desk.json` 加上 `taskbar` |
+
+與計畫不同的地方：
+- 只能從 **Taskbar** 的空白處拖曳移動，Start 上不行。原因是 Start 在按下時就會打開選單，兩種操作會衝突。右鍵選單另外加了 Larger 和 Smaller。
+- 調整大小用的 grip 是桌面上緊貼 bar 的那一列或那一欄，畫成細線 `▁▔▏▕`，放在視窗下面，不另外佔掉桌面空間。被最大化的視窗蓋住時，改用右鍵選單的 Larger 和 Smaller。
+- 從上下換到左右時，寬度預設 24 欄；從左右換到上下時，高度預設 1 列。同方向換邊時保留原本的大小。
+
+測試：taskbar 有 6 個單元測試，涵蓋四個邊的 bar、desk、grip 互不重疊、按鈕和提示都在 bar 內、換行與直排、大小範圍、最近邊判斷；`app` 有 1 個測試，確認四個邊的 Start 選單都開在 Start 旁邊的桌面那一側。
+
+pty 實測（`docs/tmp/claude-scratch/b21/`，200×36）：
+
+| 情境 | 結果 |
+|---|---|
+| 拖空白處到上方 | bar 換到第 0 列，grip `▔` 在第 1 列 |
+| 拖到左邊 | 寬 24 欄：Start、每列一個 **Task**，提示在最後一列 |
+| 右鍵 → Right | bar 換到右邊；Start 選單開在 bar 左側 |
+| 重開 desk | 仍在右邊（`desk.json` `taskbar: {edge: right, size: 24}`） |
+| 右鍵 → Bottom，拖 grip 往上 2 列 | 高度變成 4 列；Smaller 一次後存成 3 列 |
+| Smaller 回到 1 列 | `desk.json` 不再寫 `taskbar` |

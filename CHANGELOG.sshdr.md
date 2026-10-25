@@ -6,6 +6,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: desk Taskbar on any screen edge (B21): drag its empty space or use its right-click menu;
+  resize it by dragging the thin line beside it (1–4 rows, 12–40 columns); saved in `desk.json`.
 - feat: desk follows server events instead of polling (B23): one `events.subscribe` stream per
   Server, local over the API socket and remote over `ssh -W`; an idle desk starts no `herdr`
   processes, a quiet Machine is pinged every 3 s.

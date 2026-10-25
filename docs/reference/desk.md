@@ -27,9 +27,16 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 | `⊞ Start` | click | **Start Menu**: Machines, New window, New task, Tile all, Quit desk |
 | **Task** button | click | the Task's windows (`▁` = minimized); choosing one restores and raises it |
 | **Task** button | right click | Rename…, New window, Minimize all, Restore all, Close task… (confirms) |
+| **Taskbar** space without a button | drag | move the bar to the screen edge nearest the pointer (the landing place is highlighted) |
+| **Taskbar** space without a button | right click | Top, Bottom, Left, Right (`•` marks the current one), Larger, Smaller |
+| Thin line along the **Taskbar** (`▁▔▏▕`, under windows) | drag | resize: 1–4 rows at the top or bottom, 12–40 columns at the left or right |
 
 | **Machines Folder** row | double click, Enter | connect (see below); a connected **Machine** raises its windows |
 | **Machines Folder** row | right click | Connect, Open ssh window (not connected); Show windows, Disconnect (connected) |
+
+A top or bottom **Taskbar** wraps its **Task** buttons onto further rows; a left or right one
+shows Start on the first row, one **Task** per row below, and the hint on the last row. Menus
+opened from the bar open on the desk side of it; maximized windows follow the bar.
 
 Menus: arrow keys move, Enter chooses, Esc closes. Dialogs: Enter confirms, Esc cancels.
 
@@ -85,8 +92,8 @@ The desk writes `desk.json` in the Session data directory (`crate::session::data
 layout has been unchanged for 1 s, and on quit (temporary file, then rename):
 per window the position, size, maximize state, minimize state, and stacking order, keyed by the
 terminal id (local) or `<profile id>/<terminal id>` (**Machine**), plus the **Machines** that were
-connected. The next start restores the layout and reconnects those **Machines**; a **Machine**'s
-windows get their saved place when they open. Windows without an entry open stacked on top.
+connected, and the **Taskbar** edge and size (`taskbar`, omitted at the default bottom, 1 row).
+The next start restores the layout and reconnects those **Machines**; a **Machine**'s windows get their saved place when they open. Windows without an entry open stacked on top.
 
 ## Limits
 
