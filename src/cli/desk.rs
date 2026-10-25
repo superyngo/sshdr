@@ -3,6 +3,8 @@
 //! ADR 0006/0007 (`docs/adr/`); plan `docs/plan/2026-10-25-b14-desk-shell.md`.
 
 mod app;
+mod dialog;
+mod menu;
 mod server;
 mod stream;
 mod taskbar;

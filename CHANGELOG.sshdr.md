@@ -23,6 +23,11 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   (label and window count, click raises its top window), every tab a window on its root pane
   (title notes extra panes); a 1 s poll follows tabs created, renamed, or closed elsewhere.
   `TabInfo` gains optional `root_pane_id` (API schema regenerated).
+- feat: desk windows minimize (`[_]`, Ctrl+\ `z`) into their Task; a left click on a Task lists
+  its windows (minimized ones marked) and restores the chosen one; right-click menus on window
+  titles (rename, minimize, maximize, close) and Task buttons (rename, new window, minimize or
+  restore all, close task with confirmation); renames write back with `tab rename` /
+  `workspace rename`. Menu and dialog ported from wens-tui-lab.
 
 ### 2026-10-24
 

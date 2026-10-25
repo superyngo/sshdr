@@ -173,6 +173,24 @@ pub(super) fn close_window(tab_id: &str) {
     }
 }
 
+fn run(args: &[&str]) {
+    if let Err(err) = herdr_json(args) {
+        tracing::warn!(%err, "desk: command failed");
+    }
+}
+
+pub(super) fn rename_window(tab_id: &str, label: &str) {
+    run(&["tab", "rename", tab_id, label]);
+}
+
+pub(super) fn rename_task(workspace_id: &str, label: &str) {
+    run(&["workspace", "rename", workspace_id, label]);
+}
+
+pub(super) fn close_task(workspace_id: &str) {
+    run(&["workspace", "close", workspace_id]);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

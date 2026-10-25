@@ -25,6 +25,8 @@ pub(super) struct Window {
     pub title: String,
     pub rect: Rect,
     pub state: WinState,
+    /// Hidden from the desk; listed under its **Task** on the Taskbar.
+    pub minimized: bool,
 }
 
 impl Window {
@@ -69,10 +71,11 @@ impl Desk {
         self.windows.iter_mut().find(|w| w.id == id)
     }
 
-    /// Bring to the top of the z-order and focus.
+    /// Bring to the top of the z-order and focus; restores a minimized window.
     pub fn raise(&mut self, id: WinId) {
         if let Some(i) = self.windows.iter().position(|w| w.id == id) {
-            let w = self.windows.remove(i);
+            let mut w = self.windows.remove(i);
+            w.minimized = false;
             self.windows.push(w);
             self.focus = Some(id);
         }
@@ -97,7 +100,26 @@ impl Desk {
     pub fn close(&mut self, id: WinId) {
         self.windows.retain(|w| w.id != id);
         if self.focus == Some(id) {
-            self.focus = self.windows.last().map(|w| w.id);
+            self.focus = self.top_visible();
+        }
+    }
+
+    /// Topmost window that is not minimized.
+    pub fn top_visible(&self) -> Option<WinId> {
+        self.windows
+            .iter()
+            .rev()
+            .find(|w| !w.minimized)
+            .map(|w| w.id)
+    }
+
+    /// Hide a window; focus moves to the topmost visible one.
+    pub fn minimize(&mut self, id: WinId) {
+        if let Some(w) = self.get_mut(id) {
+            w.minimized = true;
+        }
+        if self.focus == Some(id) || self.focus.is_none() {
+            self.focus = self.top_visible();
         }
     }
 
@@ -117,6 +139,7 @@ impl Desk {
             title,
             rect: fit(want, desk),
             state: WinState::Normal,
+            minimized: false,
         });
         self.focus = Some(id);
         id
@@ -124,13 +147,13 @@ impl Desk {
 
     /// Arrange all windows in a grid.
     pub fn tile_all(&mut self, desk: Rect) {
-        let n = self.windows.len() as u16;
+        let n = self.windows.iter().filter(|w| !w.minimized).count() as u16;
         if n == 0 {
             return;
         }
         let cols = (1..=n).find(|c| c * c >= n).unwrap_or(1);
         let rows = n.div_ceil(cols);
-        for (i, w) in self.windows.iter_mut().enumerate() {
+        for (i, w) in self.windows.iter_mut().filter(|w| !w.minimized).enumerate() {
             let (c, r) = (i as u16 % cols, i as u16 / cols);
             let x0 = desk.x + desk.width * c / cols;
             let x1 = desk.x + desk.width * (c + 1) / cols;
@@ -431,5 +454,23 @@ mod tests {
         assert_eq!(map.hit(6, 6), Some(2));
         assert_eq!(map.hit(1, 1), Some(1));
         assert_eq!(map.hit(20, 20), None);
+    }
+
+    #[test]
+    fn minimize_moves_focus_and_raise_restores() {
+        let mut d = desk_with(3);
+        let top = d.windows[2].id;
+        d.minimize(top);
+        assert!(d.windows[2].minimized);
+        assert_eq!(d.focus, Some(d.windows[1].id));
+        d.tile_all(DESK);
+        assert_eq!(d.windows[2].rect, Rect::new(2 + 6, 1 + 4, 30, 10));
+        d.raise(top);
+        assert!(!d.get(top).unwrap().minimized);
+        assert_eq!(d.focus, Some(top));
+        for w in d.windows.clone() {
+            d.minimize(w.id);
+        }
+        assert_eq!(d.focus, None);
     }
 }

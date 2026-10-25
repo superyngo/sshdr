@@ -15,6 +15,8 @@ use ratatui::{
     Frame, Terminal,
 };
 
+use super::dialog::{Dialog, DialogButton, Outcome};
+use super::menu::{Menu, MenuHit, MenuItem};
 use super::server::{self, Snapshot, TaskInfo, WindowInfo};
 use super::stream::{DeskEvent, Session};
 use super::taskbar;
@@ -41,12 +43,38 @@ enum Hit {
     Content(WinId),
     Title(WinId),
     Handle(WinId, Edges),
+    Minimize(WinId),
     Maximize(WinId),
     Close(WinId),
     NewWindow,
     TileAll,
     Quit,
     Task(usize),
+    Menu(MenuHit),
+    Dialog(DialogButton),
+}
+
+/// What a menu row does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Action {
+    Raise(WinId),
+    Minimize(WinId),
+    ToggleMaximize(WinId),
+    Close(WinId),
+    RenameWindow(WinId),
+    NewWindowIn(String),
+    RenameTask(String),
+    MinimizeTask(String),
+    RestoreTask(String),
+    CloseTask(String),
+}
+
+/// What a dialog's primary button does.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DialogTarget {
+    RenameWindow(String),
+    RenameTask(String),
+    CloseTask(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +120,8 @@ struct App {
     content_press: Option<WinId>,
     last_title_click: Option<(WinId, Instant)>,
     prefix_armed: bool,
+    menu: Option<Menu<Action>>,
+    dialog: Option<Dialog<DialogTarget>>,
     quit: bool,
     notice: Option<String>,
     stats: Stats,
@@ -171,18 +201,6 @@ impl App {
         };
         if let Err(err) = created.and_then(|info| self.attach(info, None)) {
             self.notice = Some(format!("new window failed: {err}"));
-        }
-    }
-
-    /// Raise the topmost window of a **Task**.
-    fn raise_task(&mut self, workspace_id: &str) {
-        let top = self.desk.windows.iter().rev().find(|w| {
-            self.data
-                .get(&w.id)
-                .is_some_and(|data| data.info.workspace_id == workspace_id)
-        });
-        if let Some(id) = top.map(|w| w.id) {
-            self.desk.raise(id);
         }
     }
 
@@ -295,6 +313,34 @@ impl App {
             self.handle_mouse(report.at_cell(x, y));
             return;
         }
+        if let Some(dialog) = self.dialog.as_mut() {
+            match dialog.key(chunk) {
+                Outcome::Pending => {}
+                Outcome::Submit => self.submit_dialog(),
+                Outcome::Cancel => self.dialog = None,
+            }
+            return;
+        }
+        if let Some(menu) = self.menu.as_mut() {
+            match chunk {
+                b"\x1b[A" | b"\x1bOA" => menu.step(-1),
+                b"\x1b[B" | b"\x1bOB" => menu.step(1),
+                b"\r" | b"\n" => {
+                    let action = menu.action(menu.highlighted);
+                    self.menu = None;
+                    if let Some(action) = action {
+                        self.run_action(action);
+                    }
+                }
+                b"\x1b" => self.menu = None,
+                // Any other key closes the menu and is handled normally.
+                _ => {
+                    self.menu = None;
+                    return self.handle_chunk(chunk);
+                }
+            }
+            return;
+        }
         if self.prefix_armed {
             self.prefix_armed = false;
             match chunk {
@@ -307,6 +353,11 @@ impl App {
                 b"t" => {
                     self.desk.tile_all(self.desk_rect());
                     self.sync_sizes();
+                }
+                b"z" => {
+                    if let Some(id) = self.desk.focus {
+                        self.desk.minimize(id);
+                    }
                 }
                 b"m" => {
                     if let Some(id) = self.desk.focus {
@@ -364,6 +415,27 @@ impl App {
         match mouse.kind {
             MouseEventKind::Down(button) => {
                 let hit = self.hits.hit(column, row);
+                if self.dialog.is_some() {
+                    match hit {
+                        Some(Hit::Dialog(DialogButton::Primary)) => self.submit_dialog(),
+                        Some(Hit::Dialog(DialogButton::Cancel)) => self.dialog = None,
+                        _ => {}
+                    }
+                    return;
+                }
+                if self.menu.is_some() {
+                    match hit {
+                        Some(Hit::Menu(MenuHit::Row(index))) => {
+                            let action = self.menu.take().and_then(|m| m.action(index));
+                            if let Some(action) = action {
+                                self.run_action(action);
+                            }
+                        }
+                        Some(Hit::Menu(MenuHit::Body)) => {}
+                        _ => self.menu = None,
+                    }
+                    return;
+                }
                 if let Some(id) = hit_window(hit) {
                     self.desk.raise(id);
                 }
@@ -406,6 +478,10 @@ impl App {
                             });
                         }
                     }
+                    (Some(Hit::Title(id)), MouseButton::Right) => {
+                        self.menu = self.window_menu(id, (column, row));
+                    }
+                    (Some(Hit::Minimize(id)), MouseButton::Left) => self.desk.minimize(id),
                     (Some(Hit::Maximize(id)), MouseButton::Left) => {
                         self.desk.toggle_maximize(id, desk);
                         self.sync_sizes();
@@ -417,10 +493,12 @@ impl App {
                         self.sync_sizes();
                     }
                     (Some(Hit::Quit), MouseButton::Left) => self.quit = true,
-                    (Some(Hit::Task(index)), MouseButton::Left) => {
-                        if let Some(task) = self.tasks.get(index).map(|t| t.workspace_id.clone()) {
-                            self.raise_task(&task);
-                        }
+                    (Some(Hit::Task(index)), button) => {
+                        let at = (column, row);
+                        self.menu = match button {
+                            MouseButton::Right => self.task_menu(index, at),
+                            _ => self.task_windows_menu(index, at),
+                        };
                     }
                     _ => {}
                 }
@@ -491,7 +569,7 @@ impl App {
             .set_style(desk, Style::default().bg(DESK_BG));
         hits.push(desk, Hit::Desktop);
 
-        for w in &self.desk.windows {
+        for w in self.desk.windows.iter().filter(|w| !w.minimized) {
             let rect = w.rect.intersection(desk);
             if rect.width < 3 || rect.height < 3 {
                 continue;
@@ -506,8 +584,8 @@ impl App {
             if let Some(data) = self.data.get(&w.id) {
                 data.mirror.render(frame, inner, focused);
             }
-            // Title bar: title on the left, [□][×] on the right.
-            let buttons_w = 6u16;
+            // Title bar: title on the left, [_][□][×] on the right.
+            let buttons_w = 9u16;
             let title_w = rect.width.saturating_sub(2 + buttons_w + 1);
             let title_style = if focused {
                 border.add_modifier(Modifier::BOLD)
@@ -528,6 +606,9 @@ impl App {
             );
             if rect.width > buttons_w + 4 {
                 let bx = rect.right() - 1 - buttons_w;
+                frame.buffer_mut().set_string(bx, rect.y, "[_]", border);
+                hits.push(Rect::new(bx, rect.y, 3, 1), Hit::Minimize(w.id));
+                let bx = bx + 3;
                 frame.buffer_mut().set_string(bx, rect.y, "[□]", border);
                 frame.buffer_mut().set_string(
                     bx + 3,
@@ -602,7 +683,7 @@ impl App {
             }
             let hint = match (&self.notice, self.prefix_armed) {
                 (_, true) => {
-                    "desk: n new · w close · m max · t tile · Tab next · q quit".to_string()
+                    "desk: n new · w close · z min · m max · t tile · Tab next · q quit".to_string()
                 }
                 (Some(notice), false) => notice.clone(),
                 (None, false) => format!("{} windows · Ctrl+\\ desk keys", self.desk.windows.len()),
@@ -615,7 +696,188 @@ impl App {
                 Style::default().bg(BAR_BG).fg(Color::Gray),
             );
         }
+        if let Some(menu) = &self.menu {
+            menu.render(desk, frame.buffer_mut(), |rect, hit| {
+                hits.push(rect, Hit::Menu(hit));
+            });
+        }
+        if let Some(dialog) = &self.dialog {
+            hits.push(screen, Hit::Desktop);
+            dialog.render(screen, frame.buffer_mut(), |rect, button| {
+                hits.push(rect, Hit::Dialog(button));
+            });
+        }
         self.hits = hits;
+    }
+
+    fn window_menu(&self, id: WinId, at: (u16, u16)) -> Option<Menu<Action>> {
+        let w = self.desk.get(id)?;
+        let maximize = match w.state {
+            WinState::Maximized { .. } => "Restore size",
+            WinState::Normal => "Maximize",
+        };
+        Menu::open(
+            w.title.clone(),
+            at,
+            vec![
+                MenuItem::new("Rename…", "", Action::RenameWindow(id)),
+                MenuItem::new("Minimize", "^\\ z", Action::Minimize(id)),
+                MenuItem::new(maximize, "^\\ m", Action::ToggleMaximize(id)),
+                MenuItem::new("Close", "^\\ w", Action::Close(id)),
+            ],
+        )
+    }
+
+    /// Left click on a Task button: its windows, minimized ones marked.
+    fn task_windows_menu(&self, index: usize, at: (u16, u16)) -> Option<Menu<Action>> {
+        let task = self.tasks.get(index)?;
+        let items = self
+            .desk
+            .windows
+            .iter()
+            .filter(|w| {
+                self.data
+                    .get(&w.id)
+                    .is_some_and(|d| d.info.workspace_id == task.workspace_id)
+            })
+            .map(|w| {
+                let mark = if w.minimized { "▁ " } else { "  " };
+                MenuItem::new(format!("{mark}{}", w.title), "", Action::Raise(w.id))
+            })
+            .collect();
+        Menu::open(task.label.clone(), at, items).map(Menu::above)
+    }
+
+    fn task_menu(&self, index: usize, at: (u16, u16)) -> Option<Menu<Action>> {
+        let task = self.tasks.get(index)?;
+        let ws = &task.workspace_id;
+        Menu::open(
+            task.label.clone(),
+            at,
+            vec![
+                MenuItem::new("Rename…", "", Action::RenameTask(ws.clone())),
+                MenuItem::new("New window", "", Action::NewWindowIn(ws.clone())),
+                MenuItem::new("Minimize all", "", Action::MinimizeTask(ws.clone())),
+                MenuItem::new("Restore all", "", Action::RestoreTask(ws.clone())),
+                MenuItem::new("Close task…", "", Action::CloseTask(ws.clone())),
+            ],
+        )
+        .map(Menu::above)
+    }
+
+    fn task_windows(&self, workspace_id: &str) -> Vec<WinId> {
+        self.desk
+            .windows
+            .iter()
+            .map(|w| w.id)
+            .filter(|id| {
+                self.data
+                    .get(id)
+                    .is_some_and(|d| d.info.workspace_id == workspace_id)
+            })
+            .collect()
+    }
+
+    fn task_label(&self, workspace_id: &str) -> String {
+        self.tasks
+            .iter()
+            .find(|t| t.workspace_id == workspace_id)
+            .map(|t| t.label.clone())
+            .unwrap_or_default()
+    }
+
+    fn run_action(&mut self, action: Action) {
+        let desk = self.desk_rect();
+        match action {
+            Action::Raise(id) => self.desk.raise(id),
+            Action::Minimize(id) => self.desk.minimize(id),
+            Action::ToggleMaximize(id) => {
+                self.desk.toggle_maximize(id, desk);
+                self.sync_sizes();
+            }
+            Action::Close(id) => self.close_window(id),
+            Action::RenameWindow(id) => {
+                if let Some(data) = self.data.get(&id) {
+                    self.dialog = Some(Dialog::input(
+                        "Rename window",
+                        &data.info.label,
+                        "Rename",
+                        DialogTarget::RenameWindow(data.info.tab_id.clone()),
+                    ));
+                }
+            }
+            Action::NewWindowIn(ws) => {
+                match server::create_window(&ws).and_then(|info| self.attach(info, None)) {
+                    Ok(_) => {}
+                    Err(err) => self.notice = Some(format!("new window failed: {err}")),
+                }
+            }
+            Action::RenameTask(ws) => {
+                let label = self.task_label(&ws);
+                self.dialog = Some(Dialog::input(
+                    "Rename task",
+                    &label,
+                    "Rename",
+                    DialogTarget::RenameTask(ws),
+                ));
+            }
+            Action::MinimizeTask(ws) => {
+                for id in self.task_windows(&ws) {
+                    self.desk.minimize(id);
+                }
+            }
+            Action::RestoreTask(ws) => {
+                for id in self.task_windows(&ws) {
+                    self.desk.raise(id);
+                }
+            }
+            Action::CloseTask(ws) => {
+                let label = self.task_label(&ws);
+                let count = self.task_windows(&ws).len();
+                self.dialog = Some(Dialog::confirm(
+                    "Close task",
+                    format!("Close task {label} and its {count} windows?"),
+                    "Close",
+                    DialogTarget::CloseTask(ws),
+                ));
+            }
+        }
+    }
+
+    fn submit_dialog(&mut self) {
+        let Some(dialog) = self.dialog.take() else {
+            return;
+        };
+        let text = dialog.input.as_deref().map(str::trim).unwrap_or_default();
+        match dialog.target {
+            DialogTarget::RenameWindow(tab_id) if !text.is_empty() => {
+                server::rename_window(&tab_id, text);
+                if let Some(id) = self.win_id(&tab_id) {
+                    let mut info = self.data[&id].info.clone();
+                    info.label = text.to_string();
+                    if let Some(w) = self.desk.get_mut(id) {
+                        w.title = window_title(&info);
+                    }
+                    if let Some(data) = self.data.get_mut(&id) {
+                        data.info = info;
+                    }
+                }
+            }
+            DialogTarget::RenameTask(ws) if !text.is_empty() => {
+                server::rename_task(&ws, text);
+                if let Some(task) = self.tasks.iter_mut().find(|t| t.workspace_id == ws) {
+                    task.label = text.to_string();
+                }
+            }
+            DialogTarget::CloseTask(ws) => {
+                for id in self.task_windows(&ws) {
+                    self.drop_window(id);
+                }
+                self.tasks.retain(|t| t.workspace_id != ws);
+                server::close_task(&ws);
+            }
+            _ => {}
+        }
     }
 }
 
@@ -631,6 +893,7 @@ fn hit_window(hit: Option<Hit>) -> Option<WinId> {
         Hit::Content(id)
         | Hit::Title(id)
         | Hit::Handle(id, _)
+        | Hit::Minimize(id)
         | Hit::Maximize(id)
         | Hit::Close(id) => Some(id),
         _ => None,
@@ -715,6 +978,8 @@ pub(super) fn run() -> io::Result<i32> {
         content_press: None,
         last_title_click: None,
         prefix_armed: false,
+        menu: None,
+        dialog: None,
         quit: false,
         notice: None,
         stats: Stats::default(),
