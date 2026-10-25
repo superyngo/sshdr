@@ -6,6 +6,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- docs: plan b15 machines folder (desktop icon, per-Machine Tier, remote Tasks, stream budget,
+  windows kept across disconnects).
 - docs: backlog adds the owner's Desktop suggestions: minimize into Taskbar groups, right-click
   rename menus, and New/Quit under the Start Menu (B14); hierarchy mapping decision (B20); movable,
   resizable Taskbar (B21).
