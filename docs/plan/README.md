@@ -13,4 +13,5 @@ None.
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-10-25 | [B14 桌面外殼計畫](2026-10-25-b14-desk-shell.md) | Landed |
 | 2026-10-24 | [B13 桌面技術驗證計畫](2026-10-24-b13-desk-spike.md) | Landed |

@@ -33,6 +33,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 - feat: desk saves window position, size, maximize, minimize, and stacking order to
   `desk.json` in the Session data directory on quit and restores them on the next start;
   windows without saved state open stacked on top.
+- docs: record B14 desk shell results (per-step live checks, 1 vs 15 window cost against B13)
+  in the plan; add `docs/reference/desk.md`; backlog moves B14 to Done and adds B23 (save on
+  change, event-driven sync).
 
 ### 2026-10-24
 
