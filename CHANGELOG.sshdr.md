@@ -6,6 +6,10 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: desk start menu drops new window (`Ctrl+\ n` stays).
+- feat: desk machine menus are the same for server and ssh: Connect when not connected; Show
+  windows, New window, Disconnect when connected, whichever tier; Open ssh window is gone;
+  disconnecting an ssh machine closes its ssh windows after asking; ssh machines reconnect on start.
 - feat: desk machines folder offers new window (B29) on Local and connected machines.
 - feat: desk side taskbar collapses like the herdr sidebar (B30): `«`/`»`, `Ctrl+\ b`, or the
   taskbar menu; the state is saved.

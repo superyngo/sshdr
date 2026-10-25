@@ -29,15 +29,15 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 | Pane | click | focus it (`pane.focus`) and pass the click on |
 | Border | drag | resize |
 | Content | any | forwarded to the pane under the pointer |
-| `⊞ Start` | click | **Start Menu**: Machines (the **Machines Folder**), New window, Tile all, Quit desk |
+| `⊞ Start` | click | **Start Menu**: Machines (the **Machines Folder**), Tile all, Quit desk |
 | **Task** button | click | the **Machine**'s windows (`▁` = minimized); choosing one restores and raises it |
-| **Task** button | right click | New window, Minimize all, Restore all, then Disconnect (connected **Machine**) or Connect |
+| **Task** button | right click | New window, Minimize all, Restore all, then Disconnect (connected **Machine**, **Server** or **SSH Tier**) or Connect |
 | **Taskbar** space without a button | drag | move the bar to the screen edge nearest the pointer (the landing place is highlighted) |
 | **Taskbar** space without a button | right click | Top, Bottom, Left, Right (`•` marks the current one), Collapse or Expand (left or right only), Larger, Smaller (not while collapsed) |
 | Thin line along the **Taskbar** (`▁▔▏▕`, under windows) | drag | resize: 1–4 rows at the top or bottom, 12–40 columns at the left or right |
 
 | **Machines Folder** row | double click, Enter | connect (see below); a connected **Machine** raises its windows |
-| **Machines Folder** row | right click | Connect, Open ssh window (not connected); Show windows, New window, Disconnect (connected); Show windows, New window (Local) |
+| **Machines Folder** row | right click | Connect (not connected); Show windows, New window, Disconnect (connected, **Server** or **SSH Tier** alike); Show windows, New window (Local) |
 | `«` / `»` on the last row of a left or right **Taskbar** | click | collapse it to 4 columns / expand it again (as herdr's sidebar) |
 
 A top or bottom **Taskbar** wraps its **Task** buttons onto further rows; a left or right one
@@ -99,6 +99,18 @@ stall) and prefixes its window titles with `⚠`; windows keep their place, and 
 every 2 s. A window whose stream ends stays put and asks for a snapshot: it reattaches in place,
 or closes when its workspace is gone. Disconnect stops following the **Machine** and closes its
 windows; its workspaces keep running.
+
+The same menu items act on both **Tiers**; only the behavior and the status (`Server · n`,
+`SSH · n`) differ:
+
+| Item | **Server Tier** | **SSH Tier** |
+|---|---|---|
+| Connect, double click | open its workspaces as windows | open the first `ssh` window; the **Machine** then counts as connected |
+| New window | `workspace create` on the **Machine** | another local `ssh` window in its **Task** |
+| Disconnect | close its windows; its workspaces keep running | close its `ssh` windows (their workspaces end), after asking when any are open |
+
+Both are saved as connected in `desk.json` and reconnect on start; an **SSH Tier** **Machine**
+reconnects without opening a window.
 
 ## Saved layout
 
