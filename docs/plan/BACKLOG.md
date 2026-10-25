@@ -9,7 +9,6 @@ deleted. Evidence cites files and symbols, not line numbers.
 | ID | Item | Evidence | Verified | Priority | Effort | Acceptance |
 |---|---|---|---|---|---|---|
 | B3 | Decide the hard-fork point (criteria or milestone) at which Upstream sync stops and everything is renamed to sshdr in one pass (ADR 0005). Rename scope: `herdr` 3752 times in 237 `src/` files, 94 `HERDR_*` variables, `herdr.dev` update and remote-install URLs | `Cargo.toml`; `src/session.rs`; `src/update.rs`; `src/remote/attach.rs`; ADR 0005 | 2026-10-08 | P2 | L | Hard-fork criteria recorded; rename plan in `docs/plan/` |
-| B4 | Decide how Upstream CI/release workflows behave in the fork (disable, retarget, or keep) | `.github/workflows/` | 2026-10-06 | P2 | S | Workflows on `main` either pass or are intentionally disabled |
 | B7 | Add an sshdr fork notice to root `README.md` | `README.md` | 2026-10-06 | P3 | S | README states fork purpose and links `CONTEXT.md` |
 | B8 | Rescoped by ADR 0006 (2026-10-24): design the **Desktop**'s own component set (hit map, menu, window/**Snap** geometry, list, dialog), lifted from `~/repos/wens-tui-lab` (`desk.rs`, `hitmap.rs`, `menu.rs`, `geom.rs`). The shell-overlay hook-point constraint (spec R10) no longer applies because the **Desktop** is a separate **Client** | `docs/spec/2026-10-07-tui-component-kit.md` (Draft); `docs/audit/2026-10-24-desktop-env-assessment.md`; ADR 0006 | 2026-10-24 | P1 | M | Component spec for the **Desktop** approved |
 | B16 | P3 local file manager: multi-select, drag-and-drop, cut/copy/paste, **File Clipboard**, text clipboard, **File Associations** | `selection.rs`; `platform::read_clipboard_text`; herdr-sidebar `actions.rs` (single editor command only) | 2026-10-24 | P1 | L | Unit and pty-driven tests; depends on B14 |
@@ -44,6 +43,7 @@ Deferred by ADR 0006 (2026-10-24); resume when **Fleet** and **Remote Backup** r
 
 | ID | Item | Commit |
 |---|---|---|
+| B4 | **Upstream** workflows disabled in the fork: Actions off in `superyngo/sshdr` settings, files unchanged | docs: record disabled actions in the fork |
 | B28 | Drag a divider between panes in a **Terminal Window** to change the split ratio | feat: desk drags pane dividers to resize splits |
 | B29 | **Machines Folder** right-click menu offers New window on Local and connected **Server Tier** **Machines** | feat: desk machines folder offers new window |
 | B30 | A left or right **Taskbar** collapses to 4 columns (`«`/`»`, `^\ b`, menu Collapse/Expand) like herdr's compact sidebar; saved in `desk.json` | feat: desk side taskbar collapses like the herdr sidebar |
