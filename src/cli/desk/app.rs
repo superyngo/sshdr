@@ -45,7 +45,8 @@ const BLUR_BORDER: Color = Color::Indexed(245);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Hit {
     Desktop,
-    Content(WinId),
+    /// A pane (by index in the shown tab) of a window, or a **Native Window**'s content (0).
+    Content(WinId, usize),
     Title(WinId),
     Handle(WinId, Edges),
     Minimize(WinId),
@@ -152,6 +153,13 @@ impl WinData {
             .or(self.tabs.first())
     }
 
+    /// Index in `panes` of the shown tab's focused pane.
+    fn focused_pane(&self) -> usize {
+        self.active_tab()
+            .and_then(|t| t.panes.iter().position(|p| p.pane_id == t.focused_pane_id))
+            .unwrap_or(0)
+    }
+
     fn active_index(&self) -> usize {
         self.tabs
             .iter()
@@ -241,7 +249,7 @@ struct App {
     screen: Rect,
     hits: HitMap<Hit>,
     drag: Option<Drag>,
-    content_press: Option<WinId>,
+    content_press: Option<(WinId, usize)>,
     last_title_click: Option<(WinId, Instant)>,
     prefix_armed: bool,
     menu: Option<Menu<Action>>,
@@ -338,14 +346,19 @@ impl App {
         .map(|session| (session, master))
     }
 
-    /// Where a window shows its panes: the content area below the tab strip.
-    fn pane_rects(&self, id: WinId, count: usize) -> Vec<Rect> {
+    /// Where a window shows its panes: the shown tab's layout, scaled into the content area
+    /// below the tab strip.
+    fn pane_rects(&self, id: WinId) -> Vec<Rect> {
         let area = self
             .desk
             .get(id)
             .map(|w| content_area(w.inner()))
             .unwrap_or_default();
-        vec![area; count.min(1)]
+        self.data
+            .get(&id)
+            .and_then(WinData::active_tab)
+            .map(|tab| layout_rects(tab, area))
+            .unwrap_or_default()
     }
 
     /// Open a window for a workspace and stream its shown tab.
@@ -412,9 +425,9 @@ impl App {
         let key = data.target.clone();
         let want: Vec<String> = data
             .active_tab()
-            .map(|t| vec![t.terminal_id.clone()])
+            .map(|t| t.panes.iter().map(|p| p.terminal_id.clone()).collect())
             .unwrap_or_default();
-        let rects = self.pane_rects(id, want.len());
+        let rects = self.pane_rects(id);
         let size = |i: usize| {
             rects
                 .get(i)
@@ -954,9 +967,6 @@ impl App {
             return;
         };
         let mut title = data.workspace.label.clone();
-        if let Some(n) = data.active_tab().map(|t| t.other_panes).filter(|n| *n > 0) {
-            title = format!("{title} (+{n} panes)");
-        }
         if data.target != LOCAL_KEY {
             title = format!("{}: {title}", self.label(&data.target));
         }
@@ -1016,8 +1026,7 @@ impl App {
     fn sync_sizes(&mut self) {
         let ids: Vec<WinId> = self.desk.windows.iter().map(|w| w.id).collect();
         for id in ids {
-            let count = self.data.get(&id).map_or(0, |d| d.panes.len());
-            let rects = self.pane_rects(id, count);
+            let rects = self.pane_rects(id);
             let Some(data) = self.data.get_mut(&id) else {
                 continue;
             };
@@ -1165,19 +1174,51 @@ impl App {
         self.forward_input(chunk);
     }
 
-    /// The stream of the window's pane under input.
-    fn session(&mut self, id: WinId) -> Option<&mut Session> {
-        self.data.get_mut(&id)?.panes.first_mut()?.session.as_mut()
+    /// The stream of a window's pane.
+    fn session(&mut self, id: WinId, pane: usize) -> Option<&mut Session> {
+        self.data
+            .get_mut(&id)?
+            .panes
+            .get_mut(pane)?
+            .session
+            .as_mut()
     }
 
+    /// Keys go to the focused window's focused pane.
     fn forward_input(&mut self, bytes: &[u8]) {
-        if let Some(session) = self.desk.focus.and_then(|id| self.session(id)) {
+        let Some(id) = self.desk.focus else {
+            return;
+        };
+        let pane = self.data.get(&id).map_or(0, WinData::focused_pane);
+        if let Some(session) = self.session(id, pane) {
             session.input(bytes);
         }
     }
 
-    fn content_point(&self, id: WinId, column: u16, row: u16) -> Option<(u16, u16)> {
-        let inner = *self.pane_rects(id, 1).first()?;
+    /// Focus a pane of the shown tab, here and on the **Server** (`pane.focus`).
+    fn focus_pane(&mut self, id: WinId, pane: usize) {
+        let Some(data) = self.data.get_mut(&id) else {
+            return;
+        };
+        if data.focused_pane() == pane {
+            return;
+        }
+        let active = data.workspace.active_tab_id.clone();
+        let Some(tab) = data.tabs.iter_mut().find(|t| t.tab_id == active) else {
+            return;
+        };
+        let Some(pane_id) = tab.panes.get(pane).map(|p| p.pane_id.clone()) else {
+            return;
+        };
+        tab.focused_pane_id = pane_id.clone();
+        let key = data.target.clone();
+        if let Some(target) = self.target(&key) {
+            server::focus_pane(target, &pane_id);
+        }
+    }
+
+    fn content_point(&self, id: WinId, pane: usize, column: u16, row: u16) -> Option<(u16, u16)> {
+        let inner = *self.pane_rects(id).get(pane)?;
         let x = column
             .checked_sub(inner.x)?
             .min(inner.width.saturating_sub(1));
@@ -1187,11 +1228,18 @@ impl App {
         Some((x, y))
     }
 
-    fn forward_mouse(&mut self, id: WinId, action: &str, button: &str, column: u16, row: u16) {
-        let Some((x, y)) = self.content_point(id, column, row) else {
+    fn forward_mouse(
+        &mut self,
+        (id, pane): (WinId, usize),
+        action: &str,
+        button: &str,
+        column: u16,
+        row: u16,
+    ) {
+        let Some((x, y)) = self.content_point(id, pane, column, row) else {
             return;
         };
-        if let Some(session) = self.session(id) {
+        if let Some(session) = self.session(id, pane) {
             session.mouse(action, button, x, y, 0);
         }
     }
@@ -1227,9 +1275,10 @@ impl App {
                     self.desk.raise(id);
                 }
                 match (hit, button) {
-                    (Some(Hit::Content(id)), button) => {
-                        self.content_press = Some(id);
-                        self.forward_mouse(id, "down", button_name(button), column, row);
+                    (Some(Hit::Content(id, pane)), button) => {
+                        self.focus_pane(id, pane);
+                        self.content_press = Some((id, pane));
+                        self.forward_mouse((id, pane), "down", button_name(button), column, row);
                     }
                     (Some(Hit::Title(id)), MouseButton::Left) => {
                         let now = Instant::now();
@@ -1358,8 +1407,8 @@ impl App {
                         w.state = WinState::Normal;
                     }
                     self.drag = Some(drag);
-                } else if let Some(id) = self.content_press {
-                    self.forward_mouse(id, "drag", button_name(button), column, row);
+                } else if let Some(press) = self.content_press {
+                    self.forward_mouse(press, "drag", button_name(button), column, row);
                 }
             }
             MouseEventKind::Up(button) => {
@@ -1379,22 +1428,22 @@ impl App {
                         }
                     }
                     self.sync_sizes();
-                } else if let Some(id) = self.content_press.take() {
-                    self.forward_mouse(id, "up", button_name(button), column, row);
+                } else if let Some(press) = self.content_press.take() {
+                    self.forward_mouse(press, "up", button_name(button), column, row);
                 }
             }
             MouseEventKind::Moved => {
-                if let Some(Hit::Content(id)) = self.hits.hit(column, row) {
+                if let Some(Hit::Content(id, pane)) = self.hits.hit(column, row) {
                     if Some(id) == self.desk.focus {
-                        self.forward_mouse(id, "move", "left", column, row);
+                        self.forward_mouse((id, pane), "move", "left", column, row);
                     }
                 }
             }
             MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                if let Some(Hit::Content(id)) = self.hits.hit(column, row) {
+                if let Some(Hit::Content(id, pane)) = self.hits.hit(column, row) {
                     let up = mouse.kind == MouseEventKind::ScrollUp;
-                    if let Some((x, y)) = self.content_point(id, column, row) {
-                        if let Some(session) = self.session(id) {
+                    if let Some((x, y)) = self.content_point(id, pane, column, row) {
+                        if let Some(session) = self.session(id, pane) {
                             session.scroll(up, x, y);
                         }
                     }
@@ -1443,8 +1492,13 @@ impl App {
             let mut tab_hits = Vec::new();
             if let Some(data) = self.data.get(&w.id) {
                 let area = content_area(inner);
-                if let Some(pane) = data.panes.first() {
-                    pane.mirror.render(frame, area, focused);
+                let rects = self.pane_rects(w.id);
+                let focused_pane = data.focused_pane();
+                draw_dividers(&rects, area, frame.buffer_mut(), border);
+                for (index, (pane, rect)) in data.panes.iter().zip(&rects).enumerate() {
+                    pane.mirror
+                        .render(frame, *rect, focused && index == focused_pane);
+                    hits.push(*rect, Hit::Content(w.id, index));
                 }
                 render_tabs(
                     data,
@@ -1456,9 +1510,8 @@ impl App {
                         tab_hits.push((r, h));
                     },
                 );
-                hits.push(area, Hit::Content(w.id));
             } else {
-                hits.push(inner, Hit::Content(w.id));
+                hits.push(inner, Hit::Content(w.id, 0));
             }
             let folder_rows = match (self.folder, &folder_rows) {
                 (Some(f), Some(rows)) if f.win == w.id => Some((f.selected, rows)),
@@ -1849,6 +1902,54 @@ fn content_area(inner: Rect) -> Rect {
     )
 }
 
+/// A tab's pane rects in `area`: the **Server** layout scaled to fit, one cell left between
+/// neighbours for a divider.
+fn layout_rects(tab: &TabInfo, area: Rect) -> Vec<Rect> {
+    let (aw, ah) = (u32::from(tab.area.0.max(1)), u32::from(tab.area.1.max(1)));
+    let scale = |v: u16, total: u32, size: u16| {
+        let scaled = (u32::from(v) * u32::from(size) + total / 2) / total;
+        u16::try_from(scaled).unwrap_or(size).min(size)
+    };
+    tab.panes
+        .iter()
+        .map(|slot| {
+            let r = slot.rect;
+            let left = area.x + scale(r.x, aw, area.width);
+            let top = area.y + scale(r.y, ah, area.height);
+            let mut right = area.x + scale(r.x.saturating_add(r.width), aw, area.width);
+            let mut bottom = area.y + scale(r.y.saturating_add(r.height), ah, area.height);
+            if right < area.right() && right > left + 1 {
+                right -= 1;
+            }
+            if bottom < area.bottom() && bottom > top + 1 {
+                bottom -= 1;
+            }
+            Rect::new(
+                left,
+                top,
+                right.saturating_sub(left),
+                bottom.saturating_sub(top),
+            )
+        })
+        .collect()
+}
+
+/// The cells between panes: `│` beside a pane, `─` below it.
+fn draw_dividers(rects: &[Rect], area: Rect, buf: &mut ratatui::buffer::Buffer, style: Style) {
+    for r in rects {
+        if r.right() < area.right() {
+            for y in r.y..r.bottom().saturating_add(1).min(area.bottom()) {
+                buf[(r.right(), y)].set_symbol("│").set_style(style);
+            }
+        }
+        if r.bottom() < area.bottom() {
+            for x in r.x..r.right().min(area.right()) {
+                buf[(x, r.bottom())].set_symbol("─").set_style(style);
+            }
+        }
+    }
+}
+
 /// ` label × ` per tab, then ` + `; tabs that do not fit are left out.
 fn render_tabs(
     data: &WinData,
@@ -1896,7 +1997,7 @@ fn render_tabs(
 
 fn hit_window(hit: Option<Hit>) -> Option<WinId> {
     match hit? {
-        Hit::Content(id)
+        Hit::Content(id, _)
         | Hit::Title(id)
         | Hit::Handle(id, _)
         | Hit::Minimize(id)
@@ -2218,7 +2319,9 @@ mod tests {
             label: label.into(),
             pane_id: format!("{id}-p"),
             terminal_id: format!("{id}-t"),
-            other_panes: 0,
+            panes: Vec::new(),
+            area: (1, 1),
+            focused_pane_id: String::new(),
         }
     }
 
@@ -2258,5 +2361,33 @@ mod tests {
         });
         assert_eq!(hits, [Hit::Tab(7, 0), Hit::TabClose(7, 0), Hit::NewTab(7)]);
         assert_eq!(content_area(Rect::new(1, 1, 10, 5)), Rect::new(1, 2, 10, 4));
+    }
+
+    #[test]
+    fn layouts_scale_into_the_window_with_dividers() {
+        let slot = |id: &str, x, y, w, h| super::server::PaneSlot {
+            pane_id: id.into(),
+            terminal_id: id.into(),
+            rect: Rect::new(x, y, w, h),
+        };
+        let mut t = tab("w1:t1", "one");
+        t.area = (120, 40);
+        t.panes = vec![
+            slot("a", 0, 0, 60, 12),
+            slot("b", 0, 12, 60, 28),
+            slot("c", 60, 0, 60, 40),
+        ];
+        let area = Rect::new(10, 5, 60, 20);
+        let rects = layout_rects(&t, area);
+        assert_eq!(rects[0], Rect::new(10, 5, 29, 5));
+        assert_eq!(rects[1], Rect::new(10, 11, 29, 14));
+        assert_eq!(rects[2], Rect::new(40, 5, 30, 20));
+        // Panes never overlap and stay inside the area.
+        for (i, a) in rects.iter().enumerate() {
+            assert_eq!(a.intersection(area), *a);
+            for b in &rects[i + 1..] {
+                assert!(!a.intersects(*b), "{a:?} {b:?}");
+            }
+        }
     }
 }

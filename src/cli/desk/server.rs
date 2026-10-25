@@ -41,16 +41,42 @@ pub(super) struct WorkspaceInfo {
     pub active_tab_id: String,
 }
 
-/// A tab in a window's tab strip; the window shows its root pane.
+/// A tab in a window's tab strip; the window shows its panes as the **Server** lays them out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct TabInfo {
     pub tab_id: String,
     pub workspace_id: String,
     pub label: String,
+    /// The root pane (an `ssh` window's new tab runs `ssh` there).
     pub pane_id: String,
     pub terminal_id: String,
-    /// Panes in the tab besides the root pane.
-    pub other_panes: usize,
+    /// Panes as laid out in [`TabInfo::area`]; only the focused one while zoomed.
+    pub panes: Vec<PaneSlot>,
+    /// Size of the **Server**'s layout area; pane rects scale from it.
+    pub area: (u16, u16),
+    pub focused_pane_id: String,
+}
+
+/// One pane of a tab's layout, in **Server** layout cells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct PaneSlot {
+    pub pane_id: String,
+    pub terminal_id: String,
+    pub rect: ratatui::layout::Rect,
+}
+
+impl TabInfo {
+    /// A tab shown as its root pane alone (a new tab, or no layout from the **Server**).
+    fn root_only(mut self) -> Self {
+        self.panes = vec![PaneSlot {
+            pane_id: self.pane_id.clone(),
+            terminal_id: self.terminal_id.clone(),
+            rect: ratatui::layout::Rect::new(0, 0, 1, 1),
+        }];
+        self.area = (1, 1);
+        self.focused_pane_id = self.pane_id.clone();
+        self
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -196,6 +222,7 @@ fn snapshot_at(target: &Target, socket: &str, timeout: Duration) -> Result<Snaps
         &part("workspaces"),
         &part("tabs"),
         &part("panes"),
+        &part("layouts"),
     ))
 }
 
@@ -203,9 +230,15 @@ pub(super) fn snapshot(target: &Target, timeout: Duration) -> Result<Snapshot, C
     snapshot_at(target, &socket_path(target, timeout)?, timeout)
 }
 
-/// Joins the three list results. A tab shows `root_pane_id`; servers without that
-/// field fall back to the tab's first pane without a label (plugin panes carry labels).
-pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Value]) -> Snapshot {
+/// Joins the list results. A tab's root pane is `root_pane_id`; servers without that field
+/// fall back to the tab's first pane without a label (plugin panes carry labels). A tab shows the
+/// panes of its entry in `layouts`, or its root pane alone without one.
+pub(super) fn build_snapshot(
+    workspaces: &[Value],
+    tabs: &[Value],
+    panes: &[Value],
+    layouts: &[Value],
+) -> Snapshot {
     let tabs: Vec<TabInfo> = tabs
         .iter()
         .filter_map(|tab| {
@@ -223,13 +256,22 @@ pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Valu
                     .find(|p| p.get("label").is_none_or(Value::is_null))
                     .or(in_tab.first())?,
             };
-            Some(TabInfo {
+            let layout = layouts
+                .iter()
+                .find(|l| text(l, "tab_id").as_deref() == Some(&tab_id));
+            let info = TabInfo {
                 workspace_id: text(tab, "workspace_id")?,
                 label: text(tab, "label").unwrap_or_default(),
                 pane_id: text(root, "pane_id")?,
                 terminal_id: text(root, "terminal_id")?,
-                other_panes: in_tab.len().saturating_sub(1),
+                panes: Vec::new(),
+                area: (1, 1),
+                focused_pane_id: String::new(),
                 tab_id,
+            };
+            Some(match layout.and_then(|l| laid_out(&info, l, &in_tab)) {
+                Some(info) => info,
+                None => info.root_only(),
             })
         })
         .collect();
@@ -254,6 +296,62 @@ pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Valu
     Snapshot { workspaces, tabs }
 }
 
+fn rect(value: &Value) -> Option<ratatui::layout::Rect> {
+    let n = |key| {
+        value
+            .get(key)
+            .and_then(Value::as_u64)
+            .and_then(|v| u16::try_from(v).ok())
+    };
+    Some(ratatui::layout::Rect::new(
+        n("x")?,
+        n("y")?,
+        n("width")?,
+        n("height")?,
+    ))
+}
+
+/// `info` with the panes of its `layouts` entry, relative to the layout area.
+fn laid_out(info: &TabInfo, layout: &Value, in_tab: &[&Value]) -> Option<TabInfo> {
+    let area = rect(layout.get("area")?)?;
+    let focused = text(layout, "focused_pane_id").unwrap_or_else(|| info.pane_id.clone());
+    let zoomed = layout.get("zoomed").and_then(Value::as_bool) == Some(true);
+    let panes: Vec<PaneSlot> = layout
+        .get("panes")?
+        .as_array()?
+        .iter()
+        .filter_map(|slot| {
+            let pane_id = text(slot, "pane_id")?;
+            let terminal_id = in_tab
+                .iter()
+                .find(|p| text(p, "pane_id").as_deref() == Some(&pane_id))
+                .and_then(|p| text(p, "terminal_id"))?;
+            let r = rect(slot.get("rect")?)?;
+            let rect = if zoomed {
+                ratatui::layout::Rect::new(0, 0, area.width, area.height)
+            } else {
+                ratatui::layout::Rect::new(
+                    r.x.saturating_sub(area.x),
+                    r.y.saturating_sub(area.y),
+                    r.width,
+                    r.height,
+                )
+            };
+            (!zoomed || pane_id == focused).then_some(PaneSlot {
+                pane_id,
+                terminal_id,
+                rect,
+            })
+        })
+        .collect();
+    (!panes.is_empty() && area.width > 0 && area.height > 0).then(|| TabInfo {
+        panes,
+        area: (area.width, area.height),
+        focused_pane_id: focused,
+        ..info.clone()
+    })
+}
+
 /// What wakes a [`spawn_watcher`] thread.
 pub(super) enum Wake {
     /// A server event, or the desk asking for a fresh snapshot.
@@ -272,6 +370,8 @@ fn subscriptions() -> Vec<Subscription> {
         Subscription::TabClosed {},
         Subscription::TabRenamed {},
         Subscription::TabFocused {},
+        Subscription::PaneFocused {},
+        Subscription::LayoutUpdated {},
         Subscription::TabMoved {},
         Subscription::PaneCreated {},
         Subscription::PaneClosed {},
@@ -448,8 +548,11 @@ fn created_tab(value: &Value) -> io::Result<TabInfo> {
         label: text(tab, "label").unwrap_or_default(),
         pane_id: text(root, "pane_id").ok_or_else(missing)?,
         terminal_id: text(root, "terminal_id").ok_or_else(missing)?,
-        other_panes: 0,
-    })
+        panes: Vec::new(),
+        area: (1, 1),
+        focused_pane_id: String::new(),
+    }
+    .root_only())
 }
 
 /// New workspace (a window); returns it and its first tab.
@@ -503,6 +606,18 @@ fn run(target: &Target, args: &[&str]) {
     }
 }
 
+/// Focus a pane for every **Client** (`pane.focus`; the CLI only focuses by direction).
+pub(super) fn focus_pane(target: &Target, pane_id: &str) {
+    let method = Method::PaneFocus(crate::api::schema::common::PaneTarget {
+        pane_id: pane_id.to_string(),
+    });
+    let result = socket_path(target, CALL_TIMEOUT)
+        .and_then(|socket| api_call(target, &socket, method, CALL_TIMEOUT));
+    if let Err(err) = result {
+        tracing::warn!(err = %err.message, "desk: pane focus failed");
+    }
+}
+
 pub(super) fn rename_tab(target: &Target, tab_id: &str, label: &str) {
     run(target, &["tab", "rename", tab_id, label]);
 }
@@ -531,12 +646,14 @@ mod tests {
             json!({"pane_id": "w_1-1", "terminal_id": "t1", "tab_id": "w_1:1", "label": "Sidebar"}),
             json!({"pane_id": "w_1-2", "terminal_id": "t2", "tab_id": "w_1:1"}),
         ];
-        let snap = build_snapshot(&ws, &tabs, &panes);
+        let snap = build_snapshot(&ws, &tabs, &panes, &[]);
         assert_eq!(snap.workspaces.len(), 1);
         // An unknown active tab falls back to the workspace's first tab.
         assert_eq!(snap.workspaces[0].active_tab_id, "w_1:1");
         assert_eq!(snap.tabs[0].terminal_id, "t2");
-        assert_eq!(snap.tabs[0].other_panes, 1);
+        // Without a layout the tab shows its root pane alone.
+        assert_eq!(snap.tabs[0].panes.len(), 1);
+        assert_eq!(snap.tabs[0].focused_pane_id, "w_1-2");
     }
 
     #[test]
@@ -546,14 +663,46 @@ mod tests {
             json!({"pane_id": "w_1-1", "terminal_id": "t1", "tab_id": "w_1:1", "label": "Sidebar"}),
             json!({"pane_id": "w_1-2", "terminal_id": "t2", "tab_id": "w_1:1", "label": null}),
         ];
-        let snap = build_snapshot(&[], &tabs, &panes);
+        let snap = build_snapshot(&[], &tabs, &panes, &[]);
         assert_eq!(snap.tabs[0].pane_id, "w_1-2");
+    }
+
+    #[test]
+    fn layouts_give_tabs_their_panes_and_zoom_keeps_the_focused_one() {
+        let tabs = [
+            json!({"tab_id": "w_1:1", "workspace_id": "w_1", "label": "1",
+            "root_pane_id": "p1"}),
+        ];
+        let panes = [
+            json!({"pane_id": "p1", "terminal_id": "t1", "tab_id": "w_1:1"}),
+            json!({"pane_id": "p2", "terminal_id": "t2", "tab_id": "w_1:1"}),
+        ];
+        let layout = |zoomed| {
+            json!({"tab_id": "w_1:1", "zoomed": zoomed, "focused_pane_id": "p2",
+            "area": {"x": 1, "y": 2, "width": 100, "height": 40},
+            "panes": [
+                {"pane_id": "p1", "rect": {"x": 1, "y": 2, "width": 50, "height": 40}},
+                {"pane_id": "p2", "rect": {"x": 51, "y": 2, "width": 50, "height": 40}}
+            ]})
+        };
+        let snap = build_snapshot(&[], &tabs, &panes, &[layout(false)]);
+        let tab = &snap.tabs[0];
+        assert_eq!(tab.area, (100, 40));
+        assert_eq!(tab.focused_pane_id, "p2");
+        assert_eq!(tab.panes[1].terminal_id, "t2");
+        assert_eq!(tab.panes[1].rect, ratatui::layout::Rect::new(50, 0, 50, 40));
+        let zoomed = build_snapshot(&[], &tabs, &panes, &[layout(true)]);
+        assert_eq!(zoomed.tabs[0].panes.len(), 1);
+        assert_eq!(
+            zoomed.tabs[0].panes[0].rect,
+            ratatui::layout::Rect::new(0, 0, 100, 40)
+        );
     }
 
     #[test]
     fn tab_without_panes_has_no_window() {
         let tabs = [json!({"tab_id": "w_1:1", "workspace_id": "w_1", "label": "1"})];
-        assert!(build_snapshot(&[], &tabs, &[]).tabs.is_empty());
+        assert!(build_snapshot(&[], &tabs, &[], &[]).tabs.is_empty());
     }
 
     #[test]
