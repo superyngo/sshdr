@@ -1,5 +1,5 @@
 # B22 遠端 Terminal Window 技術驗證（spike）計畫
-Status: Approved — owner 2026-10-25：決策 1 可以、決策 2 選 A
+Status: Landed — 結果見 [B22 spike 結果](../audit/2026-10-25-b22-remote-desk-spike.md)；owner 2026-10-25 核准決策 1 可以、決策 2 選 A
 Date: 2026-10-25
 Source: [ADR 0007](../adr/0007-desktop-tasks-are-workspaces.md)（決策 3）；[ADR 0004](../adr/0004-fleet-registered-machines-with-connect-time-tiers.md)；[B14 計畫](2026-10-25-b14-desk-shell.md)；Backlog B22
 
@@ -27,7 +27,7 @@ Source: [ADR 0007](../adr/0007-desktop-tasks-are-workspaces.md)（決策 3）；
   `Ssh` 執行 `ssh -T <受管選項> <target> env HERDR_SESSION=<session> herdr <args>`；列表、建立、改名、關閉與串流都走它。
 - 受管選項：desk 自己組 `-o ControlMaster=auto -o ControlPath=<shared_ssh_control_path> -o ControlPersist=600 -o ServerAliveInterval=15 -o BatchMode=yes`，
   與 herdr **Machines** 共用同一個控制 socket。**不改 upstream**（不公開 `write_managed_ssh_config`）。
-- 指令：`herdr desk --ssh <target> [--session <name>]`（spike 專用）。遠端視窗標題加主機前綴。
+- 指令：`herdr desk --ssh <target> [--session <name>]`（spike 專用；實作時改成必填的 `--remote-session`，見結果 §6）。遠端視窗標題加主機前綴。
 - root pane：遠端沒有 `root_pane_id`，走 B14 的退回規則（第一個沒有 label 的 pane）——順便驗證這條路。
 - **不碰 omarchy 的預設 Session**：所有遠端操作都用獨立的 Session `desk-b22`，量測前啟動、結束後 `server stop`。
 

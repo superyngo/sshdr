@@ -38,6 +38,10 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   change, event-driven sync).
 - docs: plan B22 remote desk spike (desk over SSH against omarchy in an isolated Session,
   shared ControlMaster, latency, stream cost, disconnect, Attention).
+- docs: record B22 remote desk spike results: remote windows over SSH work against herdr 0.9.5
+  (+13 ms typing latency, ~25 KiB/s per master); sshd `MaxSessions` 10 caps streams per
+  ControlMaster, disconnects drop window geometry, polls need a timeout. Backlog closes B22 and
+  carries the findings into B15.
 
 ### 2026-10-24
 

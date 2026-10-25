@@ -13,5 +13,6 @@ never rewritten. Current behavior lives in [`../reference/`](../reference/README
 
 | Date | Document | Status |
 |---|---|---|
+| 2026-10-25 | [B22 遠端 Terminal Window 技術驗證結果](2026-10-25-b22-remote-desk-spike.md) | Landed — 可行；MaxSessions、斷線、逾時待 B15 處理 |
 | 2026-10-24 | [B13 桌面技術驗證結果](2026-10-24-b13-desk-spike.md) | Landed — macOS 通過，Windows 未驗證 |
 | 2026-10-24 | [TUI 桌面環境改造：綜合評估](2026-10-24-desktop-env-assessment.md) | Decided — ADR 0006 |
