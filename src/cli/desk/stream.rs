@@ -2,7 +2,7 @@
 //! driving the window's pane. Only public CLI surfaces are used.
 
 use std::io::{self, BufRead, BufReader, Write};
-use std::process::{Child, ChildStdin, Command, Stdio};
+use std::process::{Child, ChildStdin, Stdio};
 use std::sync::mpsc::Sender;
 
 use base64::Engine;
@@ -21,6 +21,8 @@ pub(super) enum DeskEvent {
     Closed(WinId),
     /// Periodic server state (`server::poll`).
     Snapshot(super::server::Snapshot),
+    /// B22: result of the last poll; `Some("! auth" | "! offline")` when the target is unreachable.
+    Link(Option<&'static str>),
 }
 
 /// One `terminal session control` child streaming one pane.
@@ -37,23 +39,22 @@ impl Session {
         rows: u16,
         events: Sender<DeskEvent>,
     ) -> io::Result<Self> {
-        let exe = std::env::current_exe()?;
-        let mut child = Command::new(exe)
-            .args([
-                "terminal",
-                "session",
-                "control",
-                terminal_id,
-                "--takeover",
-                "--cols",
-                &cols.max(1).to_string(),
-                "--rows",
-                &rows.max(1).to_string(),
-            ])
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .spawn()?;
+        let (cols, rows) = (cols.max(1).to_string(), rows.max(1).to_string());
+        let mut child = super::transport::herdr(&[
+            "terminal",
+            "session",
+            "control",
+            terminal_id,
+            "--takeover",
+            "--cols",
+            &cols,
+            "--rows",
+            &rows,
+        ])?
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
         let stdin = child.stdin.take();
         let stdout = child
             .stdout

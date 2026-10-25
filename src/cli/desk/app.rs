@@ -101,6 +101,8 @@ struct WinData {
     session: Session,
     mirror: Mirror,
     sent_size: (u16, u16),
+    /// B22: when the oldest unanswered key went to this window (input latency).
+    input_at: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -110,6 +112,7 @@ struct Stats {
     draws: u64,
     draw_total: Duration,
     draw_max: Duration,
+    latencies: Vec<Duration>,
 }
 
 struct App {
@@ -128,6 +131,8 @@ struct App {
     quit: bool,
     notice: Option<String>,
     stats: Stats,
+    /// B22: `Some("! auth" | "! offline")` while the target cannot be polled.
+    link: Option<&'static str>,
 }
 
 fn desk_area(screen: Rect) -> Rect {
@@ -166,6 +171,7 @@ impl App {
                         session,
                         mirror,
                         sent_size: size,
+                        input_at: None,
                     },
                 );
                 Ok(id)
@@ -303,12 +309,16 @@ impl App {
                 self.stats.frames += 1;
                 self.stats.frame_bytes += bytes.len() as u64;
                 if let Some(data) = self.data.get_mut(&win) {
+                    if let Some(at) = data.input_at.take() {
+                        self.stats.latencies.push(at.elapsed());
+                    }
                     data.mirror.feed(width, height, &bytes);
                 }
             }
             // The pane exited (or the stream ended): drop the window, keep the tab alone.
             DeskEvent::Closed(win) => self.drop_window(win),
             DeskEvent::Snapshot(snap) => self.apply(snap),
+            DeskEvent::Link(link) => self.link = link,
         }
     }
 
@@ -396,6 +406,7 @@ impl App {
     fn forward_input(&mut self, bytes: &[u8]) {
         if let Some(data) = self.desk.focus.and_then(|id| self.data.get_mut(&id)) {
             data.session.input(bytes);
+            data.input_at.get_or_insert_with(Instant::now);
         }
     }
 
@@ -691,7 +702,11 @@ impl App {
                     "desk: n new · w close · z min · m max · t tile · Tab next · q quit".to_string()
                 }
                 (Some(notice), false) => notice.clone(),
-                (None, false) => format!("{} windows · Ctrl+\\ desk keys", self.desk.windows.len()),
+                (None, false) => format!(
+                    "{}{} windows · Ctrl+\\ desk keys",
+                    link_prefix(self.link),
+                    self.desk.windows.len()
+                ),
             };
             buf.set_stringn(
                 x + 1,
@@ -921,9 +936,21 @@ fn start_menu(at: (u16, u16)) -> Menu<Action> {
 }
 
 fn window_title(info: &WindowInfo) -> String {
+    let host = super::transport::remote()
+        .map(|r| format!("{}: ", r.target.split('.').next().unwrap_or(&r.target)))
+        .unwrap_or_default();
     match info.other_panes {
-        0 => info.label.clone(),
-        n => format!("{} (+{n} panes)", info.label),
+        0 => format!("{host}{}", info.label),
+        n => format!("{host}{} (+{n} panes)", info.label),
+    }
+}
+
+/// B22: link state and target shown before the window count.
+fn link_prefix(link: Option<&str>) -> String {
+    match (super::transport::remote(), link) {
+        (None, _) => String::new(),
+        (Some(r), None) => format!("{} · ", r.target),
+        (Some(r), Some(state)) => format!("{state} {} · ", r.target),
     }
 }
 
@@ -998,7 +1025,16 @@ pub(super) fn run() -> io::Result<i32> {
         Ok(found) => found,
         Err(err) => {
             eprintln!("herdr desk: {err}");
-            eprintln!("herdr desk needs a running herdr server; start one with `herdr server`.");
+            match super::transport::remote() {
+                Some(r) if super::transport::link_status(&err.to_string()) == "! auth" => eprintln!(
+                    "! auth: {} needs SSH authentication; run `herdr machine reconnect` or `ssh {}` first.",
+                    r.target, r.target
+                ),
+                Some(r) => eprintln!("! offline: cannot reach herdr on {}.", r.target),
+                None => eprintln!(
+                    "herdr desk needs a running herdr server; start one with `herdr server`."
+                ),
+            }
             return Ok(1);
         }
     };
@@ -1022,11 +1058,17 @@ pub(super) fn run() -> io::Result<i32> {
         quit: false,
         notice: None,
         stats: Stats::default(),
+        link: None,
     };
     let reattached = snap.windows.len();
     app.apply(snap);
     let state_path = state::path();
-    let saved = state::load(&state_path);
+    let remote = super::transport::remote().is_some();
+    let saved = if remote {
+        state::DeskState::default()
+    } else {
+        state::load(&state_path)
+    };
     if !saved.windows.is_empty() {
         let area = app.desk_rect();
         let terminals = app.terminal_ids();
@@ -1048,10 +1090,12 @@ pub(super) fn run() -> io::Result<i32> {
     spawn_stdin_reader(tx);
     let result = event_loop(&mut app, &mut terminal, &rx);
     let terminals = app.terminal_ids();
-    state::save(
-        &state_path,
-        &state::capture(&app.desk, |id| terminals.get(&id).cloned()),
-    );
+    if !remote {
+        state::save(
+            &state_path,
+            &state::capture(&app.desk, |id| terminals.get(&id).cloned()),
+        );
+    }
     for (_, data) in app.data.drain() {
         data.session.release();
     }
@@ -1129,6 +1173,17 @@ fn event_loop(
     Ok(())
 }
 
+/// B22: count, median, p95, and max of key-to-frame latency in milliseconds.
+fn latency_summary(samples: &[Duration]) -> serde_json::Value {
+    let mut ms: Vec<f64> = samples.iter().map(|d| d.as_secs_f64() * 1000.0).collect();
+    ms.sort_by(f64::total_cmp);
+    let at = |q: f64| {
+        ms.get(((ms.len() as f64 - 1.0) * q).round() as usize)
+            .copied()
+    };
+    serde_json::json!({"n": ms.len(), "p50": at(0.5), "p95": at(0.95), "max": ms.last()})
+}
+
 /// `HERDR_DESK_STATS=<path>` writes frame and draw counters on exit (spike measurements).
 fn write_stats(stats: &Stats) {
     let Some(path) = std::env::var_os("HERDR_DESK_STATS") else {
@@ -1145,6 +1200,7 @@ fn write_stats(stats: &Stats) {
         "draws": stats.draws,
         "draw_avg_us": avg_us,
         "draw_max_us": stats.draw_max.as_micros(),
+        "latency_ms": latency_summary(&stats.latencies),
     });
     if let Ok(mut file) = std::fs::File::create(path) {
         let _ = writeln!(file, "{line}");

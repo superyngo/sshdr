@@ -2,7 +2,7 @@
 //! **Terminal Window** showing the tab's root pane. Uses public CLI commands only.
 
 use std::io;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
 
@@ -36,8 +36,9 @@ pub(super) struct Snapshot {
 }
 
 fn herdr_json(args: &[&str]) -> io::Result<Value> {
-    let exe = std::env::current_exe()?;
-    let output = Command::new(exe).args(args).stdin(Stdio::null()).output()?;
+    let output = super::transport::herdr(args)?
+        .stdin(Stdio::null())
+        .output()?;
     if !output.status.success() {
         return Err(io::Error::other(format!(
             "herdr {}: {}",
@@ -116,13 +117,20 @@ pub(super) fn build_snapshot(workspaces: &[Value], tabs: &[Value], panes: &[Valu
 pub(super) fn spawn_poller(events: Sender<DeskEvent>) {
     std::thread::spawn(move || loop {
         std::thread::sleep(POLL_INTERVAL);
-        match snapshot() {
-            Ok(snap) => {
-                if events.send(DeskEvent::Snapshot(snap)).is_err() {
-                    return;
-                }
+        let (snap, link) = match snapshot() {
+            Ok(snap) => (Some(snap), None),
+            Err(err) => {
+                tracing::warn!(%err, "desk: poll failed");
+                (None, Some(super::transport::link_status(&err.to_string())))
             }
-            Err(err) => tracing::warn!(%err, "desk: poll failed"),
+        };
+        if events.send(DeskEvent::Link(link)).is_err() {
+            return;
+        }
+        if let Some(snap) = snap {
+            if events.send(DeskEvent::Snapshot(snap)).is_err() {
+                return;
+            }
         }
     });
 }
