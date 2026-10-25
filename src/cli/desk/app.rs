@@ -55,8 +55,6 @@ enum Hit {
     Task(usize),
     Menu(MenuHit),
     Dialog(DialogButton),
-    /// The **Machines** desktop icon.
-    Icon,
     /// A row of the **Machines Folder**.
     FolderRow(usize),
     /// **Taskbar** space without a button: drag moves the bar, right click opens its menu.
@@ -210,7 +208,6 @@ struct App {
     notice: Option<String>,
     stats: Stats,
     folder: Option<Folder>,
-    last_icon_click: Option<Instant>,
     last_row_click: Option<(usize, Instant)>,
     /// **Machines** connected by hand: an **SSH Tier** result opens an `ssh` window.
     ssh_on_tier: Vec<String>,
@@ -1081,16 +1078,6 @@ impl App {
                         self.sync_sizes();
                     }
                     (Some(Hit::Close(id)), MouseButton::Left) => self.close_window(id),
-                    (Some(Hit::Icon), MouseButton::Left) => {
-                        let now = Instant::now();
-                        let double = self
-                            .last_icon_click
-                            .is_some_and(|at| now.duration_since(at) < DOUBLE_CLICK);
-                        self.last_icon_click = Some(now);
-                        if double {
-                            self.open_folder();
-                        }
-                    }
                     (Some(Hit::FolderRow(index)), button) => {
                         if let Some(f) = self.folder.as_mut() {
                             self.desk.raise(f.win);
@@ -1229,7 +1216,6 @@ impl App {
                 .set_fg(BAR_BG);
         }
         hits.push(grip, Hit::Grip);
-        hits.push(folder::render_icon(desk, frame.buffer_mut()), Hit::Icon);
         let folder_rows = self.folder.map(|_| self.folder_rows());
 
         for w in self.desk.windows.iter().filter(|w| !w.minimized) {
@@ -1782,7 +1768,6 @@ pub(super) fn run() -> io::Result<i32> {
         notice: None,
         stats: Stats::default(),
         folder: None,
-        last_icon_click: None,
         last_row_click: None,
         ssh_on_tier: Vec::new(),
         bar: Place::default(),

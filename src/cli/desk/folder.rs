@@ -1,17 +1,12 @@
 //! **Machines Folder**: the **Native Window** listing Local and every saved **Machine** with its
 //! connection state (ADR 0004 Tiers). Drawing only; app.rs owns the actions.
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::{Color, Style},
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Color};
 
 use super::menu::{fit, FOCUS, MUTED, PANEL};
 use super::wm::WinId;
 
 pub(super) const TITLE: &str = "Machines";
-const ICON: &str = " ▣ Machines ";
 
 /// The open folder window and its highlighted row.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,25 +30,6 @@ pub(super) fn size(rows: &[Row]) -> (u16, u16) {
         .unwrap_or(u16::MAX)
         .saturating_add(5);
     (72, height.clamp(8, 30))
-}
-
-/// The desktop icon at the top-left of the desk area; returns its rect.
-pub(super) fn render_icon(desk: Rect, buf: &mut Buffer) -> Rect {
-    let rect = Rect::new(
-        desk.x + 1,
-        desk.y,
-        super::text_width(ICON).min(desk.width),
-        1,
-    )
-    .intersection(desk);
-    buf.set_stringn(
-        rect.x,
-        rect.y,
-        ICON,
-        usize::from(rect.width),
-        Style::default().bg(Color::Indexed(25)).fg(Color::White),
-    );
-    rect
 }
 
 /// Draw the list into the window's content area; `push` reports each row's rect.
