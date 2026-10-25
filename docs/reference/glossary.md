@@ -81,7 +81,8 @@ _Avoid_: widget library, UI framework.
 
 ## Desktop
 
-Decided in [ADR 0006](../adr/0006-tui-desktop-as-separate-client.md).
+Decided in [ADR 0006](../adr/0006-tui-desktop-as-separate-client.md) and
+[ADR 0007](../adr/0007-desktop-tasks-are-workspaces.md).
 
 **Desktop**:
 The sshdr **Client** started with `herdr desk`: overlapping **Windows**, a **Taskbar**, a **Start
@@ -99,12 +100,21 @@ take part in drag-and-drop and the **File Clipboard**.
 _Avoid_: built-in app.
 
 **Terminal Window**:
-A **Window** showing one pane of the local **Server** through its own terminal session stream.
+A **Window** showing one tab of a **Server**, local or on a **Machine**, through the terminal
+session stream of the tab's root pane.
 _Avoid_: shell window, console.
 
 **Taskbar**:
-The **Desktop** bar listing open **Windows** and holding the **Start Menu** button.
+The **Desktop** bar listing **Tasks** and holding the **Start Menu** button.
 _Avoid_: dock, panel.
+
+**Task**:
+A workspace shown on the **Desktop** as one **Taskbar** button grouping its **Terminal Windows**.
+_Avoid_: group, session (for this concept).
+
+**Minimize**:
+Hiding a **Window** into its **Task**'s **Taskbar** button, from which it is restored.
+_Avoid_: iconify, hide.
 
 **Start Menu**:
 The **Desktop** menu that launches **Apps**, the **Machines Folder**, and settings.
@@ -116,7 +126,7 @@ _Avoid_: tiling, docking.
 
 **Machines Folder**:
 The **Native Window** listing every **Machine**, opened from its desktop icon; the entry point for
-connecting to **Machines**.
+connecting to **Machines**; opening a **Server Tier** **Machine** shows its **Tasks**.
 _Avoid_: My Computer, host list.
 
 **App**:

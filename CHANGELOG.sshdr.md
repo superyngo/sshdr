@@ -9,6 +9,10 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 - docs: backlog adds the owner's Desktop suggestions: minimize into Taskbar groups, right-click
   rename menus, and New/Quit under the Start Menu (B14); hierarchy mapping decision (B20); movable,
   resizable Taskbar (B21).
+- docs: ADR 0007 maps the Desktop onto herdr: Tasks are workspaces, Terminal Windows are tabs
+  (root pane), and remote Server Tier tabs open as their own Windows over SSH (amends ADR 0006
+  decisions 2 and 4); glossary adds Task and Minimize; backlog closes B20, updates B14 and B15,
+  adds the B22 remote-stream spike.
 
 ### 2026-10-24
 

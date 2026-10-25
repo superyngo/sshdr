@@ -1,6 +1,7 @@
 # 0006 — TUI Desktop as a separate Client
 
 Date: 2026-10-24
+Amended by: [ADR 0007](0007-desktop-tasks-are-workspaces.md) (decisions 2 and 4)
 Assessment: [`../audit/2026-10-24-desktop-env-assessment.md`](../audit/2026-10-24-desktop-env-assessment.md)
 
 ## Context

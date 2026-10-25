@@ -11,4 +11,5 @@ Current behavior lives in [`../reference/`](../reference/README.md).
 | [0003](0003-fleet-hosts-are-machines.md) | Every Fleet Host is a herdr Machine; Fleet Operations run through herdr Servers | Superseded by 0004 (2026-10-08) |
 | [0004](0004-fleet-registered-machines-with-connect-time-tiers.md) | Fleet Hosts are registered Machines; Tier (SSH or Server) detected on each connection; one SSH implementation of Fleet Operations | Accepted (2026-10-08) |
 | [0005](0005-sync-now-hard-fork-later.md) | Keep syncing Upstream; rename to sshdr in one pass at a later hard-fork point | Accepted (2026-10-08) |
-| [0006](0006-tui-desktop-as-separate-client.md) | sshdr becomes a TUI Desktop: a separate Client (`herdr desk`) whose Terminal Windows are local Server panes; Fleet and Remote Backup deferred | Accepted (2026-10-24) |
+| [0006](0006-tui-desktop-as-separate-client.md) | sshdr becomes a TUI Desktop: a separate Client (`herdr desk`) whose Terminal Windows are local Server panes; Fleet and Remote Backup deferred | Accepted (2026-10-24); decisions 2 and 4 amended by 0007 |
+| [0007](0007-desktop-tasks-are-workspaces.md) | Desktop Tasks are workspaces, Terminal Windows are tabs, and remote Server Tier tabs open as their own Windows over SSH | Accepted (2026-10-25) |
