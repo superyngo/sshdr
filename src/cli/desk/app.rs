@@ -23,7 +23,7 @@ use super::menu::{Menu, MenuHit, MenuItem};
 use super::server::{self, Snapshot, TaskInfo, Wake, WindowInfo};
 use super::state;
 use super::stream::{DeskEvent, Session};
-use super::taskbar;
+use super::taskbar::{self, Edge, Place};
 use super::transport::{self, Link, Target, LOCAL_KEY};
 use super::wm::{self, Desk, Edges, HitMap, WinId, WinState};
 use crate::pane::desk_mirror::DeskMirror as Mirror;
@@ -59,6 +59,10 @@ enum Hit {
     Icon,
     /// A row of the **Machines Folder**.
     FolderRow(usize),
+    /// **Taskbar** space without a button: drag moves the bar, right click opens its menu.
+    Bar,
+    /// The desk line touching the **Taskbar**: drag resizes the bar.
+    Grip,
 }
 
 /// What a menu row does.
@@ -78,6 +82,9 @@ enum Action {
     MinimizeTask(TaskRef),
     RestoreTask(TaskRef),
     CloseTask(TaskRef),
+    TaskbarEdge(Edge),
+    /// Grow (+1) or shrink (-1) the **Taskbar**.
+    TaskbarSize(i8),
     OpenFolder,
     /// Double-click in the **Machines Folder**: connect, or show what is already open.
     OpenMachine(String),
@@ -102,6 +109,13 @@ enum DialogTarget {
 enum DragKind {
     Move { grab: (u16, u16) },
     Resize { edges: Edges },
+}
+
+/// A **Taskbar** drag: moving it (with the edge it would land on) or resizing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarDrag {
+    Move(Option<Edge>),
+    Resize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -200,20 +214,38 @@ struct App {
     last_row_click: Option<(usize, Instant)>,
     /// **Machines** connected by hand: an **SSH Tier** result opens an `ssh` window.
     ssh_on_tier: Vec<String>,
-}
-
-fn desk_area(screen: Rect) -> Rect {
-    Rect::new(
-        screen.x,
-        screen.y,
-        screen.width,
-        screen.height.saturating_sub(1),
-    )
+    /// **Taskbar** edge and size (B21).
+    bar: Place,
+    bar_drag: Option<BarDrag>,
 }
 
 impl App {
     fn desk_rect(&self) -> Rect {
-        desk_area(self.screen)
+        self.bar.desk(self.screen)
+    }
+
+    /// Put the **Taskbar** at `place`; windows refit the new desk (maximized ones fill it).
+    fn set_bar(&mut self, place: Place) {
+        self.bar = place.sized(place.size, self.screen);
+        self.desk.refit(self.desk_rect());
+        self.sync_sizes();
+    }
+
+    fn bar_popup(&self, menu: Menu<Action>, at: (u16, u16)) -> Menu<Action> {
+        bar_popup(self.bar, self.screen, menu, at)
+    }
+
+    fn taskbar_menu(&self, at: (u16, u16)) -> Option<Menu<Action>> {
+        let mut items: Vec<MenuItem<Action>> = [Edge::Top, Edge::Bottom, Edge::Left, Edge::Right]
+            .into_iter()
+            .map(|edge| {
+                let mark = if edge == self.bar.edge { "•" } else { "" };
+                MenuItem::new(edge.label(), mark, Action::TaskbarEdge(edge))
+            })
+            .collect();
+        items.push(MenuItem::new("Larger", "", Action::TaskbarSize(1)));
+        items.push(MenuItem::new("Smaller", "", Action::TaskbarSize(-1)));
+        Menu::open("Taskbar", at, items).map(|m| self.bar_popup(m, at))
     }
 
     fn target(&self, key: &str) -> Option<&Target> {
@@ -741,6 +773,7 @@ impl App {
             .cloned()
             .collect();
         out.windows.splice(0..0, kept);
+        out.taskbar = self.bar;
         out.machines = connected
             .into_iter()
             .filter(|key| *key != LOCAL_KEY)
@@ -1077,20 +1110,40 @@ impl App {
                         }
                     }
                     (Some(Hit::Start), MouseButton::Left) => {
-                        self.menu = Some(start_menu((self.screen.x, row)));
+                        let x = self.bar.bar(self.screen).x;
+                        self.menu = Some(self.bar_popup(start_menu(), (x, row)));
                     }
                     (Some(Hit::Task(index)), button) => {
                         let at = (column, row);
                         self.menu = match button {
                             MouseButton::Right => self.task_menu(index, at),
                             _ => self.task_windows_menu(index, at),
-                        };
+                        }
+                        .map(|m| self.bar_popup(m, at));
                     }
+                    (Some(Hit::Bar), MouseButton::Left) => {
+                        self.bar_drag = Some(BarDrag::Move(None))
+                    }
+                    (Some(Hit::Bar), MouseButton::Right) => {
+                        self.menu = self.taskbar_menu((column, row));
+                    }
+                    (Some(Hit::Grip), MouseButton::Left) => self.bar_drag = Some(BarDrag::Resize),
                     _ => {}
                 }
             }
             MouseEventKind::Drag(button) => {
-                if let Some(mut drag) = self.drag {
+                if let Some(bar_drag) = self.bar_drag {
+                    match bar_drag {
+                        BarDrag::Move(_) => {
+                            let edge = taskbar::nearest_edge((column, row), self.screen);
+                            self.bar_drag = Some(BarDrag::Move(Some(edge)));
+                        }
+                        BarDrag::Resize => {
+                            self.bar = self.bar.resized((column, row), self.screen);
+                            self.desk.refit(self.desk_rect());
+                        }
+                    }
+                } else if let Some(mut drag) = self.drag {
                     let pointer = (column, row);
                     let rect = match drag.kind {
                         DragKind::Move { grab } => {
@@ -1111,7 +1164,13 @@ impl App {
                 }
             }
             MouseEventKind::Up(button) => {
-                if let Some(drag) = self.drag.take() {
+                if let Some(bar_drag) = self.bar_drag.take() {
+                    let place = match bar_drag {
+                        BarDrag::Move(Some(edge)) => self.bar.moved(edge, self.screen),
+                        _ => self.bar,
+                    };
+                    self.set_bar(place);
+                } else if let Some(drag) = self.drag.take() {
                     if let (Some(zone), Some(w)) = (drag.zone, self.desk.get_mut(drag.id)) {
                         w.rect = zone;
                         if zone == drag.desk {
@@ -1150,12 +1209,26 @@ impl App {
 
     fn draw(&mut self, frame: &mut Frame) {
         let screen = frame.area();
-        let desk = desk_area(screen);
+        let desk = self.bar.desk(screen);
         let mut hits = HitMap::default();
         frame
             .buffer_mut()
             .set_style(desk, Style::default().bg(DESK_BG));
         hits.push(desk, Hit::Desktop);
+        // The grip: a thin line along the bar, under the windows.
+        let grip = self.bar.grip(screen);
+        let symbol = match self.bar.edge {
+            Edge::Bottom => "▁",
+            Edge::Top => "▔",
+            Edge::Left => "▏",
+            Edge::Right => "▕",
+        };
+        for position in grip.positions() {
+            frame.buffer_mut()[position]
+                .set_symbol(symbol)
+                .set_fg(BAR_BG);
+        }
+        hits.push(grip, Hit::Grip);
         hits.push(folder::render_icon(desk, frame.buffer_mut()), Hit::Icon);
         let folder_rows = self.folder.map(|_| self.folder_rows());
 
@@ -1237,13 +1310,28 @@ impl App {
                 .render(zone, frame.buffer_mut());
         }
 
-        // Bottom bar.
-        let bar = Rect::new(screen.x, screen.bottom().saturating_sub(1), screen.width, 1);
-        if bar.height == 1 && screen.height > 1 {
+        // **Taskbar** (B21): on any edge; a dragged bar shows where it would land.
+        let bar = self.bar.bar(screen);
+        if !bar.is_empty() {
             let buf = frame.buffer_mut();
             buf.set_style(bar, Style::default().bg(BAR_BG).fg(Color::White));
-            let mut x = bar.x;
-            let start = " ⊞ Start ";
+            hits.push(bar, Hit::Bar);
+            let current = self.current_task();
+            let texts: Vec<String> = self
+                .tasks
+                .iter()
+                .map(|task| {
+                    let count = self
+                        .data
+                        .values()
+                        .filter(|d| {
+                            d.target == task.target && d.info.workspace_id == task.info.workspace_id
+                        })
+                        .count();
+                    taskbar::task_text(&self.task_title(task), count)
+                })
+                .collect();
+            let layout = taskbar::layout(bar, self.bar.edge, texts);
             let start_style = if self.menu.as_ref().is_some_and(|m| m.title == START_TITLE) {
                 Style::default().bg(FOCUS_BORDER).fg(Color::Black)
             } else {
@@ -1252,23 +1340,15 @@ impl App {
                     .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             };
-            let width = super::text_width(start);
-            buf.set_string(x, bar.y, start, start_style);
-            hits.push(Rect::new(x, bar.y, width, 1), Hit::Start);
-            x += width + 1;
-            let current = self.current_task();
-            let texts = self.tasks.iter().map(|task| {
-                let count = self
-                    .data
-                    .values()
-                    .filter(|d| {
-                        d.target == task.target && d.info.workspace_id == task.info.workspace_id
-                    })
-                    .count();
-                taskbar::task_text(&self.task_title(task), count)
-            });
-            let buttons = taskbar::layout(x + 1, bar.right(), texts.collect::<Vec<_>>());
-            for (index, button) in buttons.iter().enumerate() {
+            buf.set_stringn(
+                layout.start.x,
+                layout.start.y,
+                taskbar::START,
+                usize::from(layout.start.width),
+                start_style,
+            );
+            hits.push(layout.start, Hit::Start);
+            for (index, button) in layout.buttons.iter().enumerate() {
                 let task = &self.tasks[index];
                 let active = current
                     .as_ref()
@@ -1278,33 +1358,36 @@ impl App {
                 } else {
                     Style::default().bg(Color::Indexed(239)).fg(Color::White)
                 };
-                buf.set_string(button.x, bar.y, &button.text, style);
-                hits.push(
-                    Rect::new(button.x, bar.y, button.width, 1),
-                    Hit::Task(index),
+                buf.set_string(button.rect.x, button.rect.y, &button.text, style);
+                hits.push(button.rect, Hit::Task(index));
+            }
+            if let Some(hint_rect) = layout.hint {
+                let hint = match (&self.notice, self.prefix_armed) {
+                    (_, true) => {
+                        "desk: n new · w close · z min · m max · t tile · Tab next · q quit"
+                            .to_string()
+                    }
+                    (Some(notice), false) => notice.clone(),
+                    (None, false) => format!(
+                        "{}{} windows · Ctrl+\\ desk keys",
+                        self.link_summary(),
+                        self.desk.windows.len()
+                    ),
+                };
+                buf.set_stringn(
+                    hint_rect.x + 1,
+                    hint_rect.y,
+                    hint,
+                    usize::from(hint_rect.width.saturating_sub(1)),
+                    Style::default().bg(BAR_BG).fg(Color::Gray),
                 );
             }
-            if let Some(last) = buttons.last() {
-                x = last.x + last.width;
-            }
-            let hint = match (&self.notice, self.prefix_armed) {
-                (_, true) => {
-                    "desk: n new · w close · z min · m max · t tile · Tab next · q quit".to_string()
-                }
-                (Some(notice), false) => notice.clone(),
-                (None, false) => format!(
-                    "{}{} windows · Ctrl+\\ desk keys",
-                    self.link_summary(),
-                    self.desk.windows.len()
-                ),
-            };
-            buf.set_stringn(
-                x + 1,
-                bar.y,
-                hint,
-                usize::from(bar.right().saturating_sub(x + 1)),
-                Style::default().bg(BAR_BG).fg(Color::Gray),
-            );
+        }
+        if let Some(BarDrag::Move(Some(edge))) = self.bar_drag {
+            let target = self.bar.moved(edge, screen).bar(screen);
+            frame
+                .buffer_mut()
+                .set_style(target, Style::default().bg(Color::Indexed(31)));
         }
         if let Some(menu) = &self.menu {
             menu.render(desk, frame.buffer_mut(), |rect, hit| {
@@ -1448,6 +1531,11 @@ impl App {
                 self.sync_sizes();
             }
             Action::Quit => self.quit = true,
+            Action::TaskbarEdge(edge) => self.set_bar(self.bar.moved(edge, self.screen)),
+            Action::TaskbarSize(delta) => {
+                let size = self.bar.size.saturating_add_signed(i16::from(delta));
+                self.set_bar(self.bar.sized(size, self.screen));
+            }
             Action::OpenFolder => self.open_folder(),
             Action::OpenMachine(key) => self.open_machine(&key),
             Action::Connect(key) => {
@@ -1539,8 +1627,28 @@ impl App {
 
 const START_TITLE: &str = "Start";
 
-/// The **Start Menu**, opening upward from the Start button.
-fn start_menu(at: (u16, u16)) -> Menu<Action> {
+/// Open a popup from the **Taskbar** at the pointer, on the desk side of the bar.
+fn bar_popup<A: Clone>(
+    place: Place,
+    screen: Rect,
+    mut menu: Menu<A>,
+    (column, row): (u16, u16),
+) -> Menu<A> {
+    let bar = place.bar(screen);
+    let (at, above) = match place.edge {
+        Edge::Bottom => ((column, row), true),
+        Edge::Top => ((column, row.saturating_add(1)), false),
+        Edge::Left => ((bar.right(), row), false),
+        // Clamped into the desk, so it opens left of the bar.
+        Edge::Right => ((column, row), false),
+    };
+    menu.at = at;
+    menu.above = above;
+    menu
+}
+
+/// The **Start Menu**; [`bar_popup`] places it beside the Start button.
+fn start_menu() -> Menu<Action> {
     let items = vec![
         MenuItem::new("Machines", "", Action::OpenFolder),
         MenuItem::new("New window", "^\\ n", Action::NewWindow),
@@ -1550,7 +1658,7 @@ fn start_menu(at: (u16, u16)) -> Menu<Action> {
     ];
     Menu {
         title: START_TITLE.to_string(),
-        at,
+        at: (0, 0),
         above: true,
         items,
         highlighted: 0,
@@ -1677,11 +1785,14 @@ pub(super) fn run() -> io::Result<i32> {
         last_icon_click: None,
         last_row_click: None,
         ssh_on_tier: Vec::new(),
+        bar: Place::default(),
+        bar_drag: None,
     };
     let reattached = snap.windows.len();
     app.apply(LOCAL_KEY, snap);
     let state_path = state::path();
     let saved = state::load(&state_path);
+    app.set_bar(saved.taskbar);
     if !saved.windows.is_empty() {
         let area = app.desk_rect();
         let keys = app.state_keys();
@@ -1848,7 +1959,7 @@ mod tests {
 
     #[test]
     fn start_menu_opens_above_the_taskbar_with_shell_actions() {
-        let menu = start_menu((0, 35));
+        let menu = start_menu();
         let actions: Vec<Action> = menu.items.iter().map(|i| i.action.clone()).collect();
         assert_eq!(
             actions,
@@ -1860,8 +1971,22 @@ mod tests {
                 Action::Quit
             ]
         );
-        let desk = desk_area(Rect::new(0, 0, 120, 36));
-        let rect = menu.rect(desk).unwrap();
-        assert_eq!((rect.x, rect.bottom()), (0, 35));
+        let screen = Rect::new(0, 0, 120, 36);
+        for edge in [Edge::Bottom, Edge::Top, Edge::Left, Edge::Right] {
+            let place = Place::default().moved(edge, screen);
+            let (bar, desk) = (place.bar(screen), place.desk(screen));
+            let start = taskbar::layout(bar, edge, Vec::new()).start;
+            let menu = bar_popup(place, screen, start_menu(), (start.x, start.y));
+            let rect = menu.rect(desk).unwrap();
+            assert_eq!(rect.intersection(desk), rect, "{edge:?}");
+            // Next to the Start button.
+            let gap = match edge {
+                Edge::Bottom => bar.y - rect.bottom(),
+                Edge::Top => rect.y - bar.bottom(),
+                Edge::Left => rect.x - bar.right(),
+                Edge::Right => bar.x - rect.right(),
+            };
+            assert_eq!(gap, 0, "{edge:?}");
+        }
     }
 }

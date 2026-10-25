@@ -51,6 +51,9 @@ pub(super) struct DeskState {
     /// **Machines** (profile ids) connected when the desk last exited; reconnected on start.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub machines: Vec<String>,
+    /// **Taskbar** edge and size (B21); bottom, one row when absent.
+    #[serde(default, skip_serializing_if = "super::taskbar::Place::is_default")]
+    pub taskbar: super::taskbar::Place,
 }
 
 /// Key of a window in `desk.json`: the terminal id for local windows (the B14 format), and
@@ -128,6 +131,7 @@ pub(super) fn capture(desk: &Desk, terminal: impl Fn(WinId) -> Option<String>) -
             })
             .collect(),
         machines: Vec::new(),
+        taskbar: Default::default(),
     }
 }
 
@@ -214,6 +218,7 @@ mod tests {
                 minimized: false,
             }],
             machines: Vec::new(),
+            taskbar: Default::default(),
         };
         restore(&mut d, &state, term, AREA);
         assert_eq!(d.windows[1].id, 2);
