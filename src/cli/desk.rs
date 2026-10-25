@@ -6,6 +6,7 @@ mod app;
 mod dialog;
 mod menu;
 mod server;
+mod state;
 mod stream;
 mod taskbar;
 mod wm;

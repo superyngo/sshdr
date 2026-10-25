@@ -18,6 +18,7 @@ use ratatui::{
 use super::dialog::{Dialog, DialogButton, Outcome};
 use super::menu::{Menu, MenuHit, MenuItem};
 use super::server::{self, Snapshot, TaskInfo, WindowInfo};
+use super::state;
 use super::stream::{DeskEvent, Session};
 use super::taskbar;
 use super::wm::{self, Desk, Edges, HitMap, WinId, WinState};
@@ -174,6 +175,13 @@ impl App {
                 Err(err)
             }
         }
+    }
+
+    fn terminal_ids(&self) -> HashMap<WinId, String> {
+        self.data
+            .iter()
+            .map(|(id, data)| (*id, data.info.terminal_id.clone()))
+            .collect()
     }
 
     fn win_id(&self, tab_id: &str) -> Option<WinId> {
@@ -1017,7 +1025,19 @@ pub(super) fn run() -> io::Result<i32> {
     };
     let reattached = snap.windows.len();
     app.apply(snap);
-    if reattached > 1 {
+    let state_path = state::path();
+    let saved = state::load(&state_path);
+    if !saved.windows.is_empty() {
+        let area = app.desk_rect();
+        let terminals = app.terminal_ids();
+        state::restore(
+            &mut app.desk,
+            &saved,
+            |id| terminals.get(&id).cloned(),
+            area,
+        );
+        app.sync_sizes();
+    } else if reattached > 1 {
         app.desk.tile_all(app.desk_rect());
         app.sync_sizes();
     }
@@ -1027,6 +1047,11 @@ pub(super) fn run() -> io::Result<i32> {
     server::spawn_poller(tx.clone());
     spawn_stdin_reader(tx);
     let result = event_loop(&mut app, &mut terminal, &rx);
+    let terminals = app.terminal_ids();
+    state::save(
+        &state_path,
+        &state::capture(&app.desk, |id| terminals.get(&id).cloned()),
+    );
     for (_, data) in app.data.drain() {
         data.session.release();
     }

@@ -30,6 +30,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
   `workspace rename`. Menu and dialog ported from wens-tui-lab.
 - feat: desk Start Menu: a `⊞ Start` button at the left of the Taskbar opens New window, New
   task (`workspace create`), Tile all, and Quit desk; replaces the spike's New/Tile/Quit buttons.
+- feat: desk saves window position, size, maximize, minimize, and stacking order to
+  `desk.json` in the Session data directory on quit and restores them on the next start;
+  windows without saved state open stacked on top.
 
 ### 2026-10-24
 
