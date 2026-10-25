@@ -18,6 +18,15 @@ sshdr changes are recorded in [`CHANGELOG.sshdr.md`](CHANGELOG.sshdr.md).
 | `docs/tmp/` | Scratch; `<agent>-scratch/` is gitignored | No | Archived to `tmp/archive/YYYY-MM.tar.gz` when stale |
 | `docs/next/`, `docs/preview/`, `docs/versions/` | Upstream herdr user documentation | Upstream-owned | Follows Upstream |
 
+## Direction
+
+sshdr stays as close to herdr as it can (owner, 2026-10-25). The first goal is a thin UI/UX
+re-packaging of herdr — the **Desktop** (`herdr desk`) over herdr's own Sessions, workspaces,
+tabs, and panes, with the same behavior wherever herdr already defines it (for example, choosing a
+tab on the **Desktop** focuses it on the **Server**, so every **Client** follows). Keep sshdr
+code thin and in sshdr-owned files; OS-like features (file manager, clipboard, file
+associations, **Apps**) come after, on top of that layer.
+
 ## Reading order
 
 1. [`docs/reference/glossary.md`](docs/reference/glossary.md) — the vocabulary every other file uses.
