@@ -1,6 +1,6 @@
 # B12：herdr Client 區分 Attention 與 SSH Tier
 
-Status: Approved（owner 2026-10-25：三項都選 A）
+Status: Landed（owner 2026-10-25：三項都選 A）
 Backlog: B12（P1, M）。依據：ADR 0004 決定 2、4。
 
 ## 1. 現況
@@ -60,3 +60,21 @@ Backlog: B12（P1, M）。依據：ADR 0004 決定 2、4。
 |---|---|
 | `feat: client shows ssh tier machines without retrying` | §3 1–5 |
 | `docs: record b12 client ssh tier` | §3 6 與本文件結果 |
+
+## 7. 結果
+
+與計畫不同的地方：
+- 安裝提示沒有另外組字串，而是在原本的錯誤訊息前加上 `SSH only:`。`matching Herdr is not ready` 的原始訊息本來就寫著 ``run `herdr --remote <host>` interactively to install or update it``；不支援的平台則顯示 `SSH only: unsupported remote platform: Windows X86`。
+- 新增一行 info log `endpoint is ssh tier`，方便確認沒有重試。
+- macmini 在 herdr client 裡原本就顯示 `! error`（是 host key 錯誤，不是 `! auth`），這次沒有改變。
+- catalog 重新載入時，SSH Tier 的機器會重新連一次（`reconcile_profiles`）。
+
+實測（debug client，`XDG_STATE_HOME=/var/tmp/desk-b15/state`，session `desk-b15l`）：
+
+| 情境 | 結果 |
+|---|---|
+| 啟動 25 秒與 75 秒 | smbnfs `○ ssh`、omarchy `●`、macmini `! error` |
+| 75 秒內的 smbnfs 連線次數 | client log 只有一次 `endpoint is ssh tier`；macmini 照舊每 30 秒重試 |
+| 點 smbnfs 的 `○ ssh` | 變成 `◐ connecting`，約 25 秒後回到 `○ ssh`，並顯示通知 `smbnfs: herdr machine status …` / `SSH only: unsupported remote platform: Windows X86` |
+
+單元測試：`missing_or_unsupported_servers_are_ssh_tier`、`ssh_tier_waits_for_manual_retry_or_catalog_reload`。

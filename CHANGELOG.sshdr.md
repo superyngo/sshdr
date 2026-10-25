@@ -6,6 +6,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: client shows ssh tier machines without retrying (B12): hosts where SSH works but no
+  usable herdr server exists show a grey `○ ssh` and reconnect only on a click, catalog reload,
+  or restart; auth and host-key failures stay `! error`.
 - feat: `machine add --ssh-only` saves a host without herdr setup (B11) in sshdr's
   `client/ssh-machines.json`; a failed setup with working SSH suggests it; `machine list`
   (`ssh_only`), `rename`, and `remove` include these machines.

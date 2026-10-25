@@ -81,6 +81,7 @@ Server 和 client 都在遠端機器上執行，本地只是一個 SSH 終端。
 - sshdr：`herdr machine add <host> --ssh-only` 不做 herdr 安裝，改存在 `client/ssh-machines.json`（`cli/ssh_machines.rs`，只記 id、label、SSH target）。herdr client 不讀這個檔，所以不會去連這些主機；`machine list`、`rename`、`remove` 和 `herdr desk` 會讀。安裝失敗但 SSH 有連上時，`machine add` 會提示改用 `--ssh-only`。
 - Client 內的 `EndpointSupervisors`（`client/endpoint/supervisor.rs`）為 Local 與每台啟用的 Machine 各維持一條連線。每條遠端連線都走 §3.2 的 bridge，但只做背景重連：不會跳出問題詢問，也不會安裝或升級遠端的 herdr。
 - 健康檢查：閒置 5 秒送 ping，10 秒沒有回應就判定連線失效（`client/endpoint/health.rs`）。重連採指數退避，最長 120 秒；連線穩定 60 秒後才重置退避。
+- 失敗分類（`supervisor.rs`）：認證、host key 等需要人處理的錯誤是 `Attention`（sidebar 紅色 `! error`／`! auth`，每 30 秒重試）。sshdr B12：SSH 有連上但主機沒有可用的 herdr（`unsupported remote platform`、`matching Herdr is not ready`、`not ready for saved machines`、`predates … endpoint protocol`，判斷在 `remote/saved.rs::saved_ssh_failure_is_ssh_tier`）是 `SshTier`，sidebar 顯示灰色 `○ ssh`，不在背景重試；點狀態標記手動重試、catalog 重新載入或 client 重開時再判斷一次（ADR 0004）。
 - Surface interest：只有目前選中的 Machine 會傳送 pane 畫面，其他 Machine 只更新 snapshot（workspace、agent 狀態、通知），以節省頻寬與遠端 CPU（`client/endpoint/activation.rs`）。
 - Sidebar 會切換到多 endpoint 版本（`client/shell/endpoint_sidebar.rs`），依 Machine 分組。
 
