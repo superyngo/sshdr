@@ -36,6 +36,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 - docs: record B14 desk shell results (per-step live checks, 1 vs 15 window cost against B13)
   in the plan; add `docs/reference/desk.md`; backlog moves B14 to Done and adds B23 (save on
   change, event-driven sync).
+- docs: plan B22 remote desk spike (desk over SSH against omarchy in an isolated Session,
+  shared ControlMaster, latency, stream cost, disconnect, Attention).
 
 ### 2026-10-24
 
