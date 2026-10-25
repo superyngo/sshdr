@@ -1,6 +1,6 @@
 # B24、B25：刪除桌面 Machines 圖示；Window = workspace、Task = Machine
 
-Status: Decided（owner 2026-10-25，見 §6；等開工確認）
+Status: Approved（owner 2026-10-25，見 §6）
 Amends（核准後）：ADR 0007 決定 1、2、4，新 ADR 0008。
 
 ## 1. 需求（owner 2026-10-25）

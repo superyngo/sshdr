@@ -9,7 +9,7 @@ The living backlog is [BACKLOG.md](BACKLOG.md) — undated, never frozen while w
 
 | Date | Document | Status |
 |---|---|---|
-| 2026-10-25 | [B24、B25 Desktop 階層調整](2026-10-25-b24-b25-desk-hierarchy.md) | Decided |
+| 2026-10-25 | [B24、B25 Desktop 階層調整](2026-10-25-b24-b25-desk-hierarchy.md) | Approved |
 
 ## Landed
 
