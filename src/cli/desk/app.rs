@@ -99,8 +99,6 @@ enum Action {
     OpenMachine(String),
     Connect(String),
     Disconnect(String),
-    /// **SSH Tier**: a local window running `ssh`.
-    OpenSsh(String),
 }
 
 /// What a dialog's primary button does.
@@ -109,6 +107,8 @@ enum DialogTarget {
     RenameWindow(WinId),
     RenameTab(WinId, String),
     CloseWindow(WinId),
+    /// Disconnect an **SSH Tier** **Machine**, closing its `ssh` windows.
+    Disconnect(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -710,6 +710,11 @@ impl App {
         }
     }
 
+    /// Connected for the menus: following its **Server**, or detected as **SSH Tier**.
+    fn is_on(state: &TargetState) -> bool {
+        state.connected || state.link == Link::Ssh
+    }
+
     fn link(&self, key: &str) -> Link {
         self.targets
             .iter()
@@ -805,7 +810,7 @@ impl App {
                     || self
                         .targets
                         .iter()
-                        .any(|t| t.target.key() == *key && t.connected)
+                        .any(|t| t.target.key() == *key && Self::is_on(t))
                     || self.data.values().any(|d| d.task == *key)
             })
             .map(str::to_string)
@@ -826,7 +831,7 @@ impl App {
                     Target::Local => ("this computer".to_string(), "Local".to_string()),
                     Target::Machine(m) => (m.target.clone(), t.link.text().to_string()),
                 };
-                let status = if t.connected && windows > 0 {
+                let status = if Self::is_on(t) && windows > 0 {
                     format!("{status} · {windows}")
                 } else {
                     status
@@ -860,8 +865,7 @@ impl App {
         let Some(state) = self.targets.iter().find(|t| t.target.key() == key) else {
             return;
         };
-        match (state.link, state.connected) {
-            (Link::Ssh, false) => self.open_ssh(key),
+        match (state.link, Self::is_on(state)) {
             (Link::Connecting, _) => {}
             (_, true) => {
                 // Connected (or Local): bring its windows forward.
@@ -879,7 +883,7 @@ impl App {
         let state = self.targets.get(index)?;
         let key = state.target.key().to_string();
         let mut items = Vec::new();
-        match (&state.target, state.connected) {
+        match (&state.target, Self::is_on(state)) {
             (Target::Local, _) => {
                 items.push(MenuItem::new(
                     "Show windows",
@@ -902,8 +906,7 @@ impl App {
                 items.push(MenuItem::new("Disconnect", "", Action::Disconnect(key)));
             }
             (Target::Machine(_), false) => {
-                items.push(MenuItem::new("Connect", "", Action::Connect(key.clone())));
-                items.push(MenuItem::new("Open ssh window", "", Action::OpenSsh(key)));
+                items.push(MenuItem::new("Connect", "", Action::Connect(key)));
             }
         }
         Menu::open(state.target.label().to_string(), at, items)
@@ -934,6 +937,29 @@ impl App {
     /// Stop following a **Machine** and close its windows; its workspaces stay on its
     /// **Server**.
     fn disconnect(&mut self, key: &str) {
+        if self.link(key) == Link::Ssh {
+            let windows = self.task_windows(key).len();
+            if windows > 0 {
+                self.dialog = Some(Dialog::confirm(
+                    "Disconnect",
+                    format!("Close the {windows} ssh window(s) of {}?", self.label(key)),
+                    "Disconnect",
+                    DialogTarget::Disconnect(key.to_string()),
+                ));
+                return;
+            }
+        }
+        self.disconnect_now(key);
+    }
+
+    /// **SSH Tier**: close its `ssh` windows (ending their sessions); **Server Tier**: stop
+    /// following and close its windows, leaving its workspaces running.
+    fn disconnect_now(&mut self, key: &str) {
+        if self.link(key) == Link::Ssh {
+            for id in self.task_windows(key) {
+                self.close_window_now(id);
+            }
+        }
         let Some(state) = self.target_state(key) else {
             return;
         };
@@ -969,7 +995,7 @@ impl App {
         let connected: Vec<&str> = self
             .targets
             .iter()
-            .filter(|t| t.connected)
+            .filter(|t| Self::is_on(t))
             .map(|t| t.target.key())
             .collect();
         let kept: Vec<state::SavedWindow> = self
@@ -1772,7 +1798,7 @@ impl App {
             MenuItem::new("Restore all", "", Action::RestoreTask(key.clone())),
         ];
         if let Some(state) = self.targets.iter().find(|t| t.target.key() == key) {
-            match (&state.target, state.connected) {
+            match (&state.target, Self::is_on(state)) {
                 (Target::Local, _) => {}
                 (Target::Machine(_), true) => {
                     items.push(MenuItem::new(
@@ -1854,7 +1880,6 @@ impl App {
                 self.connect(&key);
             }
             Action::Disconnect(key) => self.disconnect(&key),
-            Action::OpenSsh(key) => self.open_ssh(&key),
             Action::MinimizeTask(key) => {
                 for id in self.task_windows(&key) {
                     self.desk.minimize(id);
@@ -1898,6 +1923,7 @@ impl App {
                 }
             }
             DialogTarget::CloseWindow(id) => self.close_window_now(id),
+            DialogTarget::Disconnect(key) => self.disconnect_now(&key),
             _ => {}
         }
     }
@@ -2338,14 +2364,7 @@ mod tests {
     fn start_menu_opens_above_the_taskbar_with_shell_actions() {
         let menu = start_menu();
         let actions: Vec<Action> = menu.items.iter().map(|i| i.action.clone()).collect();
-        assert_eq!(
-            actions,
-            [
-                Action::OpenFolder,
-                Action::TileAll,
-                Action::Quit
-            ]
-        );
+        assert_eq!(actions, [Action::OpenFolder, Action::TileAll, Action::Quit]);
         let screen = Rect::new(0, 0, 120, 36);
         for edge in [Edge::Bottom, Edge::Top, Edge::Left, Edge::Right] {
             let place = Place::default().moved(edge, screen);
