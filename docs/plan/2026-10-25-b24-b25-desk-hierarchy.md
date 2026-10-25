@@ -1,6 +1,6 @@
 # B24、B25：刪除桌面 Machines 圖示；Window = workspace、Task = Machine
 
-Status: Draft（評估，等 owner 決定 §4）
+Status: Decided（owner 2026-10-25，見 §6；等開工確認）
 Amends（核准後）：ADR 0007 決定 1、2、4，新 ADR 0008。
 
 ## 1. 需求（owner 2026-10-25）
@@ -64,9 +64,31 @@ Amends（核准後）：ADR 0007 決定 1、2、4，新 ADR 0008。
    - A（建議）Local 加上已連線或已有視窗的 Machine；未連線的 Machine 從 Start → Machines 連。
    - B 所有已存的 Machine 都顯示（未連線的顯示灰色，點了就連線）。
 
-## 5. 分批（核准後）
+## 5. 分批（舊版，見 §6）
 
 | 批次 | commit |
 |---|---|
 | B24 | `feat: desk drops the machines desktop icon` |
 | B25 | `docs: adr 0008 desk windows are workspaces and tasks are machines`、`feat: desk windows are workspaces with tabs`、`feat: desk tasks are machines`、`docs: record b25 desk hierarchy` |
+
+## 6. Owner 決定（2026-10-25）
+
+1. **Tab 顯示**：照 herdr 的 workspace 版面，上面一列 tab 頁籤，內容是目前 tab 的完整 split 版面（不只 root pane）。
+2. **切換 tab**：同步到 server（`tab focus`）。點 pane 也同步 `pane focus`。
+3. **`[×]`**：關閉 workspace，超過一個 tab 時先確認；tab 頁籤上的 `×` 關單一 tab。
+4. **Native Window**：未定。owner 目前的想法是把「Machine 開出來的 Task」當成一個 App 來收納；之後的 App（檔案管理員等）一起想。這次維持現狀：Machines Folder 不歸任何 Task。
+5. **Taskbar**：Local 加已連線的 Machine。
+
+### 技術依據（split 版面）
+- `session.snapshot` 的 `layouts[]`（`PaneLayoutSnapshot`）每個 tab 有 `splits[]`（方向、比例）與 `panes[]`（pane id、是否 focused），desk 用比例在視窗內重新算每個 pane 的位置，不用 server 那邊的絕對座標。
+- 每個看得到的 pane 開一條 `terminal session control` stream；pane 的 PTY 大小跟著 desk 算出的格子走（和現在一個 tab 一條 stream 的做法相同）。
+- 遠端每個 master 最多 8 條 stream 的規則不變，pane 多時會多開 master。
+
+### 修正後的分批
+
+| 批次 | 內容 | commit |
+|---|---|---|
+| B24 | 刪除桌面圖示 | `feat: desk drops the machines desktop icon` |
+| B25 | ADR 0008；Task = Machine；Window = workspace，tab 頁籤（`tab focus` 同步、`+` 新 tab、`×` 關 tab、右鍵 Rename）；`[×]` 關 workspace；存檔 key 改 workspace；這一批 tab 內容先只顯示 root pane | `docs: adr 0008 desk windows are workspaces and tasks are machines`、`feat: desk tasks are machines`、`feat: desk windows are workspaces with tabs` |
+| B26 | tab 內照 split 版面顯示所有 pane，pane 間畫分隔線，點 pane 同步 `pane focus`，鍵盤輸入送到 focused pane；這一批不支援拖曳分隔線改比例 | `feat: desk shows split panes inside a tab` |
+| 文件 | desk.md、glossary（**Task**、**Terminal Window**、**Desktop**）、CHANGELOG、BACKLOG | `docs: record b24 b25 b26 desk hierarchy` |

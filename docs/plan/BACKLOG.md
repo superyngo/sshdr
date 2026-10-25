@@ -18,6 +18,7 @@ deleted. Evidence cites files and symbols, not line numbers.
 | B19 | Touch layout for the **Desktop** (tap = press + release; no drag, right-click, or long-press) | `~/repos/wens-tui-lab/src/mobile.rs`; tui-components contract C12; ADR 0006 | 2026-10-24 | P3 | L | Spec approved; after the first release |
 | B24 | Drop the `▣ Machines` desktop icon; the **Machines Folder** stays in the **Start Menu** | `src/cli/desk/app.rs` `Hit::Icon`; `folder::render_icon` | 2026-10-25 | P2 | S | No icon on the desk; Start → Machines still opens the folder |
 | B25 | Re-map the **Desktop** to herdr's hierarchy: **Window** = workspace with a tab strip, **Task** = **Machine** (named by its label, not renamable); amends ADR 0007 | `src/cli/desk/app.rs`, `state.rs`, `taskbar.rs`; plan `2026-10-25-b24-b25-desk-hierarchy.md` | 2026-10-25 | P1 | L | One **Taskbar** button per **Machine**; each window is a workspace whose tabs switch inside it |
+| B26 | Show a tab's split panes inside its **Window** as herdr lays them out (`layouts[]` ratios), one stream per pane, click to focus (`pane focus`); divider dragging later | `src/cli/desk/app.rs`; `src/api/schema/panes.rs` `PaneLayoutSnapshot`; plan `2026-10-25-b24-b25-desk-hierarchy.md` | 2026-10-25 | P1 | M | A split tab shows every pane in its window; typing goes to the focused pane |
 
 ## Pending verification
 
