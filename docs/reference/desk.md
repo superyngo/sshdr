@@ -1,7 +1,7 @@
 # Desktop client (`herdr desk`)
 
-The **Desktop** is a separate **Client** (ADR 0006) that shows the local **Server**'s Session as
-overlapping **Terminal Windows**. Mapping (ADR 0007): every workspace is a **Task**, every tab a
+The **Desktop** is a separate **Client** (ADR 0006) that shows the local **Server**'s Session, and
+the Sessions of connected **Server Tier** **Machines**, as overlapping **Terminal Windows**. Mapping (ADR 0007): every workspace is a **Task**, every tab a
 **Terminal Window** showing the tab's root pane. Code: `src/cli/desk/`.
 
 ## Running
@@ -23,9 +23,13 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 | `[_]` `[□]` `[×]` | click | minimize, maximize / restore, close (`tab close`) |
 | Border | drag | resize |
 | Content | any | forwarded to the pane |
-| `⊞ Start` | click | **Start Menu**: New window, New task, Tile all, Quit desk |
+| `▣ Machines` icon | double click | open the **Machines Folder** |
+| `⊞ Start` | click | **Start Menu**: Machines, New window, New task, Tile all, Quit desk |
 | **Task** button | click | the Task's windows (`▁` = minimized); choosing one restores and raises it |
 | **Task** button | right click | Rename…, New window, Minimize all, Restore all, Close task… (confirms) |
+
+| **Machines Folder** row | double click, Enter | connect (see below); a connected **Machine** raises its windows |
+| **Machines Folder** row | right click | Connect, Open ssh window (not connected); Show windows, Disconnect (connected) |
 
 Menus: arrow keys move, Enter chooses, Esc closes. Dialogs: Enter confirms, Esc cancels.
 
@@ -44,14 +48,43 @@ Ctrl+\ then: `n` new window · `w` close · `z` minimize · `m` maximize · `t` 
   it, the first pane without a label is used. Other panes in the tab are not shown; the title
   says `(+N panes)`.
 
+## Machines
+
+The **Machines Folder** lists Local and every enabled saved **Machine** (`herdr machine add`;
+read from the endpoint catalog, never written). Status per row: `Local`, `not connected`,
+`connecting…`, `Server` (with its window count), `SSH`, `! auth`, `! offline`.
+
+Connecting runs `herdr workspace list` on the **Machine** over SSH and detects the **Tier** each
+time (ADR 0004):
+
+| Result | Status | Effect |
+|---|---|---|
+| Lists returned | `Server` | its workspaces join the **Taskbar** as `<machine>: <task>`; its tabs open as windows titled `<machine>: <tab>`; polled every second like Local |
+| ssh exit 255 with an authentication or host-key error | `! auth` | nothing opens; no prompt (`BatchMode=yes`) |
+| other ssh exit 255, or no answer in 12 s | `! offline` | nothing opens |
+| ssh works, `herdr` fails or is missing | `SSH` | a local window runs `ssh <target>`, in a local **Task** named after the **Machine** |
+
+Remote commands run as `env HERDR_SESSION=<profile session> herdr …` over the managed
+ControlMaster (`platform::shared_ssh_control_path`, the same socket herdr itself uses). Each master
+carries at most 8 window streams; more windows open another master, started before its streams.
+
+A poll that fails or takes over 5 s marks the **Machine** `! offline` (shown in the **Taskbar**
+hint) and prefixes its window titles with `⚠`; windows keep their place. A window whose stream
+ends stays put and reattaches after the next successful poll; it closes only when its tab is gone.
+Disconnect stops polling and closes the **Machine**'s windows; its tabs keep running.
+
 ## Saved layout
 
 On quit the desk writes `desk.json` in the Session data directory (`crate::session::data_dir()`):
-per terminal id the window position, size, maximize state, minimize state, and stacking order.
-The next start restores them; windows without an entry open stacked on top.
+per window the position, size, maximize state, minimize state, and stacking order, keyed by the
+terminal id (local) or `<profile id>/<terminal id>` (**Machine**), plus the **Machines** that were
+connected. The next start restores the layout and reconnects those **Machines**; a **Machine**'s
+windows get their saved place when they open. Windows without an entry open stacked on top.
 
 ## Limits
 
-- Local **Server** only; remote **Machines** are B22 / B15.
+- Remote **Machines** need OpenSSH ControlMaster (Unix); the **Machines Folder** cannot add or
+  remove **Machines** (`herdr machine add|remove`).
+- `machine add` does not yet save **SSH Tier** profiles (B11), so only hand-edited catalogs list them.
 - Kitty keyboard protocol is not negotiated over `terminal session control` (legacy key bytes only).
 - Not yet run on Windows (V2).

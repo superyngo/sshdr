@@ -6,6 +6,12 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-25
 
+- feat: desk Machines Folder (B15): `▣ Machines` icon and Start Menu entry list Local and saved
+  Machines with their Tier; Server Tier Machines add their Tasks and windows over SSH, SSH Tier
+  opens an `ssh` window, Attention shows `! auth`; connected Machines reconnect on start.
+- feat: desk targets for local and remote Machines: per-Machine polling with a 5 s timeout
+  (`! offline`), windows kept and reattached in place across stream loss, at most 8 streams per
+  ControlMaster with the master started before its streams.
 - docs: plan b15 machines folder (desktop icon, per-Machine Tier, remote Tasks, stream budget,
   windows kept across disconnects).
 - docs: backlog adds the owner's Desktop suggestions: minimize into Taskbar groups, right-click

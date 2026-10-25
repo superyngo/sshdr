@@ -1,5 +1,5 @@
 # B15 Machines Folder 計畫
-Status: Approved（owner 2026-10-25：三項都選 A）
+Status: Landed（owner 2026-10-25：三項都選 A）
 Date: 2026-10-25
 Source: Backlog B15；[ADR 0004](../adr/0004-fleet-registered-machines-with-connect-time-tiers.md)；[ADR 0007](../adr/0007-desktop-tasks-are-workspaces.md)；[B22 結果](../audit/2026-10-25-b22-remote-desk-spike.md) §5
 
@@ -61,3 +61,41 @@ desk 桌面上有 **Machines** 圖示，打開是 **Machines Folder**（**Native
 3. **SSH Tier 的視窗放在哪個 Task？**
    - A（建議）：每台 **Machine** 一個本機 **Task**，名稱是 **Machine** 名稱。
    - B：全部放在一個叫 `ssh` 的 **Task**。
+
+## 8. 結果
+
+| 步驟 | commit | 驗證 |
+|---|---|---|
+| 1–3 | `d2067604 feat: desk targets for local and remote machines` | 見下；步驟 2、3 與 1 一起提交（同一批檔案），commit 內文已註明 |
+| 4 | `286a19f2 feat: desk machines folder` | 見下 |
+
+測試環境：獨立 `XDG_STATE_HOME=/var/tmp/desk-b15/state`（只含三筆測試 profile），本機 Session `desk-b15l`，
+omarchy 的 profile 指向 Session `desk-b15`。腳本與輸出在 `docs/tmp/claude-scratch/b15/`（`desk_drive.py` 加了依畫面文字點擊）。
+
+| 情境 | 結果 |
+|---|---|
+| `desk.json` 記著 omarchy，重開 desk | 自動重連；**Taskbar** 出現 `omarchy: api ·1`，視窗標題 `omarchy: 1`，可輸入 |
+| 關掉 desk 的 master（`ssh -O exit`） | 視窗留在拖過去的位置，約 1 秒內原位重接，可繼續輸入 |
+| 暫停 master（`kill -STOP`） | 約 5 秒後提示列顯示 `omarchy ! offline`、標題變 `⚠ omarchy: 1`；`CONT` 後恢復 |
+| 15 個遠端視窗 | desk 到 omarchy 只有 2 條 TCP（master 0 與 master 1）；第一次實作時 7 條串流同時搶建 master 1，6 條變直連，改為先建 master 再開串流後消失 |
+| **Machines Folder** | 雙擊圖示開啟；macmini（host key 未確認）→ `! auth`；smbnfs（Windows、無 herdr）→ `SSH`，在本機 **Task** `smbnfs` 開出 `PS C:\Users\Admin>` 視窗；omarchy 右鍵 Disconnect → **Task** 與視窗消失；雙擊重連 → 視窗回到存下的位置 |
+
+效能（release，200×60，每視窗 `seq`，20 秒，`desk_perf.py`；同一台機器先後跑 `main` 與本分支）：
+
+| 視窗數 | desk CPU main → B15 | 繪製平均 main → B15 | frame/s main → B15 |
+|---|---|---|---|
+| 1 | 2.8% → 2.8% | 0.287 → 0.286 ms | 54 → 54 |
+| 15 | 11.8% → 12.1% | 2.90 → 2.98 ms | 300 → 296 |
+
+沒有可量測的差異。這次 15 視窗的 server CPU 只到約 230%（B14 時約 440%），因為測試時機器負載高（load average 約 40），兩邊條件相同。
+
+### 測試中的失誤
+
+- 第一次斷線測試用迴圈對 `/tmp/hssh-1000/` 下所有 socket 送 `ssh -O exit`，連帶關掉了 herdr client 自己連 omarchy 的 master（`41c18f…`）。
+  herdr client 在 1 分鐘內自動重建（14:50 新 socket），之後的測試只對 desk 的 socket 下指令。
+
+### 留下的問題
+
+- `machine add` 還不會存 **SSH Tier** profile（B11），所以 smbnfs 這類主機目前只有手改 catalog 才會出現。
+- 遠端 **Machine** 上有 herdr 但沒有在跑的 server 時，會被判成 **SSH Tier**（`herdr workspace list` 失敗）；desk 不會替遠端啟動 server。
+- 連上的 **Machine** 每秒 3 個 ssh 子程序輪詢（B23 的 `events.subscribe` 也適用遠端）。
