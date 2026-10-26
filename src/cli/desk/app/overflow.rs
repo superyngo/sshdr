@@ -14,6 +14,12 @@ pub(super) enum NativeDrag {
     Bar(Option<WinId>, BarDrag),
     /// A selection box in a **Files** window (F3a).
     Box(WinId),
+    /// Selected **Files** items, pressed at `from`, now at `at` (F3c).
+    Items {
+        win: WinId,
+        from: (u16, u16),
+        at: (u16, u16),
+    },
 }
 
 /// Rows or columns per wheel notch.
@@ -96,6 +102,10 @@ impl App {
                 }
                 return;
             }
+            Some(NativeDrag::Items { win, from, .. }) => {
+                self.scroll_drag = Some(NativeDrag::Items { win, from, at });
+                return;
+            }
             None => return,
         };
         let offset = drag.to(at);
@@ -116,12 +126,16 @@ impl App {
 }
 
 impl App {
-    /// Button released: any bar or box drag ends.
-    pub(super) fn native_up(&mut self) {
-        if let Some(NativeDrag::Box(win)) = self.scroll_drag.take() {
-            if let Some(f) = self.files.get_mut(&win) {
-                f.box_end();
+    /// Button released: any bar, box, or item drag ends; dragged items drop.
+    pub(super) fn native_up(&mut self, mouse: MouseEvent) {
+        match self.scroll_drag.take() {
+            Some(NativeDrag::Box(win)) => {
+                if let Some(f) = self.files.get_mut(&win) {
+                    f.box_end();
+                }
             }
+            Some(NativeDrag::Items { win, from, at }) if from != at => self.files_drop(win, mouse),
+            _ => {}
         }
     }
 }

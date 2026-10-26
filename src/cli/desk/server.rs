@@ -691,6 +691,11 @@ pub(super) fn run_in_pane(target: &Target, pane_id: &str, command: &str) {
     run(target, &["pane", "run", pane_id, command]);
 }
 
+/// Type `text` into a pane without Enter (dropped **Files** paths).
+pub(super) fn send_text(target: &Target, pane_id: &str, text: &str) {
+    run(target, &["pane", "send-text", pane_id, text]);
+}
+
 fn run(target: &Target, args: &[&str]) {
     if let Err(err) = herdr_json(target, args) {
         tracing::warn!(%err, "desk: command failed");

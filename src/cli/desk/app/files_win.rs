@@ -109,6 +109,9 @@ impl App {
         if let Some(request) = request {
             self.files_request(win, request);
         }
+        if let (FilesHit::Row(index), false) = (hit, right) {
+            self.files_drag_start(win, index, at);
+        }
         self.files_title(win);
     }
 

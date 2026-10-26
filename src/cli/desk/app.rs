@@ -30,6 +30,7 @@ use super::wm::{self, Desk, Edges, HitMap, WinId, WinState};
 use crate::pane::desk_mirror::DeskMirror as Mirror;
 use crate::raw_input::{parse_sgr_mouse_report, RawInputByteFramer};
 
+mod files_drag;
 mod files_ops;
 mod files_win;
 mod overflow;
@@ -1420,7 +1421,7 @@ impl App {
                 }
             }
             MouseEventKind::Up(button) => {
-                self.native_up();
+                self.native_up(mouse);
                 if let Some(mut split) = self.split_drag.take() {
                     split.send((column, row), true, &self.ratios);
                 } else if let Some(bar_drag) = self.bar_drag.take() {
@@ -1668,6 +1669,7 @@ impl App {
                 .buffer_mut()
                 .set_style(target, Style::default().bg(Color::Indexed(31)));
         }
+        self.draw_ghost(frame.buffer_mut());
         if let Some(menu) = &self.menu {
             menu.render(desk, frame.buffer_mut(), |rect, hit| {
                 hits.push(rect, Hit::Menu(hit));
