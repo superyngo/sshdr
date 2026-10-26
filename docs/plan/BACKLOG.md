@@ -15,6 +15,7 @@ deleted. Evidence cites files and symbols, not line numbers.
 | B17 | P4 remote file manager (spec `2026-10-25-desk-files.md` F5): SSH file layer over the managed OpenSSH config (a subset of sshi `cp`), copy between **Machines**, progress, conflicts, cancel; Windows hosts | `src/remote/attach.rs` `RemoteSsh`, `write_managed_ssh_config`; `~/repos/sshi`; ADR 0004, 0006 | 2026-10-24 | P1 | L | Verified against real remote **Machines**; depends on B16 |
 | B18 | P5 **App** model: herdr plugin manifest plus **Desktop** fields (icon, **Start Menu** entry, **File Associations**, window placement) | `src/api/schema/plugins.rs`; `src/app/api/plugins/`; ADR 0006 | 2026-10-24 | P2 | M | Sample **App** installs and launches from the **Start Menu**; depends on B14 |
 | B19 | Touch layout for the **Desktop** (tap = press + release; no drag, right-click, or long-press) | `~/repos/wens-tui-lab/src/mobile.rs`; tui-components contract C12; ADR 0006 | 2026-10-24 | P3 | L | Spec approved; after the first release |
+| B31 | Evaluate resizable column widths in the **Files** list view (drag a header edge; saved with the view) | spec `2026-10-25-desk-files.md` Views; `src/cli/desk/files/` | 2026-10-26 | P3 | M | Decision recorded; if accepted, dragging a header edge resizes the column and the width survives restart |
 
 ## Pending verification
 
@@ -37,13 +38,12 @@ Deferred by ADR 0006 (2026-10-24); resume when **Fleet** and **Remote Backup** r
 | B5 | Reconcile dependencies after ADR 0004: `russh`/`russh-sftp`/`SessionPool` likely dropped (transport is managed OpenSSH); still check `unicode-width` 0.1 vs 0.2, `chrono` vs `time`, `rusqlite` | sshi and herdr `Cargo.toml` | 2026-10-08 |
 | B9 | Decide where **Fleet** dispatch and aggregation live: in the **Client**, in the local **Server** (survives detach, reachable from CLI), or the CLI only | `docs/reference/server-client-remote.md` §4; AGENTS.md runtime/client boundary guardrail; ADR 0004 | 2026-10-08 |
 | B10 | Store **Fleet** data (**Groups**, shell type) in an sshdr-owned file keyed by profile id, not in `endpoints.json` | `src/client/endpoint/catalog.rs` `deny_unknown_fields`; ADR 0004 | 2026-10-08 |
-| B31 | Evaluate resizable column widths in the **Files** list view (drag a header edge; saved with the view) | spec `2026-10-25-desk-files.md` Views; `src/cli/desk/files/` | 2026-10-26 | P3 | M | Decision recorded; if accepted, dragging a header edge resizes the column and the width survives restart |
-| B32 | Overflow scrolling in every **Window**: wheel and draggable scrollbars on x and y for **Native Windows** (Files list, menus, dialogs), reusing herdr's terminal scroll handling (`src/client/shell/mouse.rs` wheel and scrollbar drag) | `src/cli/desk/folder.rs` `render` (rows past the window are cut, no scroll); `src/client/shell/mouse.rs` | 2026-10-26 | P2 | M | Content larger than its **Window** scrolls by wheel and scrollbar drag on both axes; Terminal Windows keep herdr's behavior |
 
 ## Done
 
 | ID | Item | Commit |
 |---|---|---|
+| B32 | Overflow scrolling in **Native Windows**: **Files** list scrolls on both axes (wheel, Shift+wheel, scrollbar click and drag), long menus scroll; Terminal Windows keep herdr's scrollback | feat: desk native windows scroll on both axes |
 | B27 | **Native Windows** on the **Taskbar**: **Files** is one **App** with one **Task** (ADR 0009) | docs: record the desk files design |
 | B4 | **Upstream** workflows disabled in the fork: Actions off in `superyngo/sshdr` settings, files unchanged | docs: record disabled actions in the fork |
 | B28 | Drag a divider between panes in a **Terminal Window** to change the split ratio | feat: desk drags pane dividers to resize splits |

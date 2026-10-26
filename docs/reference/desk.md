@@ -20,6 +20,7 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 |---|---|---|
 | Title bar | drag | move (edges snap to a hidden 12×6 grid); releasing at the left or right desk edge fills that half, at the top edge maximizes |
 | Title bar | double click | maximize / restore |
+| Menu taller than the desk | wheel; scrollbar on its right border: click, drag | scroll it (arrow keys keep the highlight shown) |
 | Title bar | right click | menu: Rename… (`workspace rename`), New tab, Minimize, Maximize, Close |
 | `[_]` `[□]` `[×]` | click | minimize, maximize / restore, close the workspace (`workspace close`; asks first when it has more than one tab) |
 | Tab strip: tab | click | show that tab (`tab focus`, so every **Client** shows it) |
@@ -60,7 +61,8 @@ its windows share one **Files** **Task** after the **Machine** buttons. A window
 | `⌕ filter` (click, `/`, `^F`) | narrows the shown names as typed; Enter keeps it, Esc clears it |
 | Column header | sort by it; again reverses (`▲`/`▼`) |
 | Row | click selects; double click or Enter opens a folder (files open with **File Associations**, F4) |
-| Wheel | scrolls the list |
+| Wheel; Shift+wheel or wheel left/right | scrolls the list up and down; sideways when the columns are wider than the window (Name keeps at least 24 columns) |
+| Scrollbars (right edge, bottom row; shown on overflow) | click jumps there, drag the thumb |
 | Keys | arrows, PgUp/PgDn, Home/End move; Backspace parent; Alt+←/→ back/forward; `^R` refresh |
 | Status bar | items (shown of total), selection and its size, free space on the volume, view and sort, connection state, loading, last error |
 
