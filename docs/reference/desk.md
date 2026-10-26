@@ -61,6 +61,7 @@ its windows share one **Files** **Task** after the **Machine** buttons. A window
 | `⌕ filter` (click, `/`, `^F`) | narrows the shown names as typed; Enter keeps it, Esc clears it |
 | Column header | sort by it; again reverses (`▲`/`▼`) |
 | Row | click selects; double click or Enter opens a folder (files open with **File Associations**, F4) |
+| Drag selected items (folders) | onto a folder row or cell, or another **Files** window: move there (Ctrl held at the drop: copy); onto a pane: type their shell-quoted paths, no Enter (`pane send-text`); a ` n items ` label follows the pointer |
 | Selection (folders) | Shift+click a range, Ctrl+click or Space toggles one, `^A` all, Esc none, drag a box from empty list space (Ctrl adds); arrow keys select the item they move to; the status bar shows the count and size |
 | Wheel; Shift+wheel or wheel left/right | scrolls the list up and down; sideways when the columns are wider than the window (Name keeps at least 24 columns) |
 | Scrollbars (right edge, bottom row; shown on overflow) | click jumps there, drag the thumb |
