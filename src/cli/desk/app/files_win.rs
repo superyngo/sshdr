@@ -93,6 +93,10 @@ impl App {
         button: MouseButton,
         at: (u16, u16),
     ) {
+        if let FilesHit::Bar(axis) = hit {
+            self.files_bar_press(win, axis, at);
+            return;
+        }
         let rows = self.machine_rows();
         let right = button == MouseButton::Right;
         let request = self
@@ -103,13 +107,6 @@ impl App {
             self.files_request(win, request);
         }
         self.files_title(win);
-    }
-
-    pub(super) fn files_scroll(&mut self, win: WinId, up: bool) {
-        let rows = self.machine_rows();
-        if let Some(f) = self.files.get_mut(&win) {
-            f.scroll_by(if up { -3 } else { 3 }, &rows);
-        }
     }
 
     pub(super) fn files_listed(&mut self, win: WinId, listing: files::Listing) {

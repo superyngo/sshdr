@@ -1,5 +1,6 @@
 //! Popup / context menu, ported from wens-tui-lab `menu.rs` (tui-components `menu-dropdown.md`).
 
+use super::scroll::{self, Axis, Extent};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -40,12 +41,16 @@ pub(super) struct Menu<A> {
     pub above: bool,
     pub items: Vec<MenuItem<A>>,
     pub highlighted: usize,
+    /// First item shown when the items overflow the screen (B32).
+    pub top: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum MenuHit {
     Row(usize),
     Body,
+    /// The scrollbar on the right border.
+    Bar,
 }
 
 impl<A: Clone> Menu<A> {
@@ -60,6 +65,7 @@ impl<A: Clone> Menu<A> {
             above: false,
             items,
             highlighted: 0,
+            top: 0,
         })
     }
 
@@ -72,6 +78,53 @@ impl<A: Clone> Menu<A> {
     pub fn step(&mut self, delta: isize) {
         let len = self.items.len() as isize;
         self.highlighted = (self.highlighted as isize + delta).rem_euclid(len) as usize;
+    }
+
+    /// Rows that fit inside the border.
+    fn visible(&self, screen: Rect) -> usize {
+        self.rect(screen)
+            .map_or(1, |r| usize::from(r.height.saturating_sub(2)).max(1))
+    }
+
+    /// First shown item: `top`, moved just enough to show the highlighted one.
+    fn first(&self, visible: usize) -> usize {
+        let low = self.highlighted.saturating_sub(visible.saturating_sub(1));
+        self.top
+            .clamp(low, self.highlighted)
+            .min(self.items.len().saturating_sub(visible))
+    }
+
+    /// The vertical extent for the scrollbar.
+    pub fn extent(&self, screen: Rect) -> Extent {
+        let visible = self.visible(screen);
+        Extent::new(self.first(visible), self.items.len(), visible)
+    }
+
+    /// The scrollbar track (right border rows), when the items overflow.
+    pub fn bar(&self, screen: Rect) -> Option<Rect> {
+        let rect = self.rect(screen)?;
+        self.extent(screen).overflows().then(|| {
+            Rect::new(
+                rect.right() - 1,
+                rect.y + 1,
+                1,
+                rect.height.saturating_sub(2),
+            )
+        })
+    }
+
+    /// Show from `top` (wheel, scrollbar); the highlight stays on a shown item.
+    pub fn scroll_to(&mut self, top: usize, screen: Rect) {
+        let visible = self.visible(screen);
+        self.top = top.min(self.items.len().saturating_sub(visible));
+        self.highlighted = self
+            .highlighted
+            .clamp(self.top, self.top + visible.saturating_sub(1));
+    }
+
+    pub fn scroll_by(&mut self, delta: isize, screen: Rect) {
+        let first = self.first(self.visible(screen));
+        self.scroll_to(first.saturating_add_signed(delta), screen);
     }
 
     pub fn action(&self, index: usize) -> Option<A> {
@@ -118,7 +171,7 @@ impl<A: Clone> Menu<A> {
         block.render(rect, buf);
         push(rect, MenuHit::Body);
         let visible = usize::from(inner.height);
-        let first = self.highlighted.saturating_sub(visible.saturating_sub(1));
+        let first = self.first(visible);
         for (row, (index, item)) in self
             .items
             .iter()
@@ -149,6 +202,10 @@ impl<A: Clone> Menu<A> {
             }
             Line::from(spans).style(style).render(row_rect, buf);
             push(row_rect, MenuHit::Row(index));
+        }
+        if let Some(track) = self.bar(screen) {
+            scroll::draw(buf, Axis::Y, track, self.extent(screen));
+            push(track, MenuHit::Bar);
         }
     }
 }
@@ -201,6 +258,26 @@ mod tests {
             MenuItem::new("two", "", 2),
             MenuItem::new("ＷＩＤＥ", "x", 3),
         ]
+    }
+
+    #[test]
+    fn long_menus_scroll_and_keep_the_highlight_shown() {
+        let items = (0..20)
+            .map(|i| MenuItem::new(format!("i{i}"), "", i))
+            .collect();
+        let screen = Rect::new(0, 0, 30, 7);
+        let mut m = Menu::open("t", (0, 0), items).unwrap();
+        assert!(m.bar(screen).is_some());
+        m.scroll_by(3, screen);
+        assert_eq!((m.extent(screen).offset, m.highlighted), (3, 3));
+        m.scroll_to(99, screen);
+        assert_eq!((m.extent(screen).offset, m.highlighted), (15, 15));
+        m.step(-1);
+        assert_eq!(m.extent(screen).offset, 14);
+        let mut buf = Buffer::empty(screen);
+        let mut rows = Vec::new();
+        m.render(screen, &mut buf, |_, h| rows.push(h));
+        assert!(rows.contains(&MenuHit::Row(14)) && rows.contains(&MenuHit::Bar));
     }
 
     #[test]

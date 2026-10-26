@@ -11,6 +11,7 @@ use ratatui::{
 
 use super::{crumbs, Cmd, Files, FilesHit, Location, MachineRow, RibbonTab, SortKey};
 use crate::cli::desk::menu::{fit, ACCENT, FOCUS, MUTED, PANEL};
+use crate::cli::desk::scroll::{self, Axis, Extent};
 use crate::cli::desk::text_width;
 
 const BAR: Style = Style::new().bg(Color::Indexed(238)).fg(Color::White);
@@ -250,16 +251,20 @@ fn address(
 /// Column: title, width, sort key, right-aligned.
 type Column = (&'static str, u16, Option<SortKey>, bool);
 
+/// Name (folders) or Target (`Machines`) never gets narrower than this; a narrower list scrolls
+/// sideways (B32).
+const MIN_GROW: u16 = 24;
+
 fn columns(machines: bool, width: u16) -> Vec<Column> {
     if machines {
-        let rest = width.saturating_sub(18 + 22 + 2);
+        let rest = width.saturating_sub(18 + 22 + 2).max(MIN_GROW);
         vec![
             ("Name", 18, Some(SortKey::Name), false),
             ("Target", rest, None, false),
             ("Status", 22, Some(SortKey::Kind), false),
         ]
     } else {
-        let rest = width.saturating_sub(9 + 17 + 10 + 2);
+        let rest = width.saturating_sub(9 + 17 + 10 + 2).max(MIN_GROW);
         vec![
             ("Name", rest, Some(SortKey::Name), false),
             ("Size", 9, Some(SortKey::Size), true),
@@ -269,6 +274,8 @@ fn columns(machines: bool, width: u16) -> Vec<Column> {
     }
 }
 
+/// Header and rows; a vertical bar on the right and a horizontal one at the bottom when they
+/// overflow. Drawn off screen at full content width, then the visible columns are copied.
 fn table(
     files: &mut Files,
     rows: &[MachineRow],
@@ -277,10 +284,35 @@ fn table(
     push: &mut dyn FnMut(Rect, FilesHit),
 ) {
     let machines = files.at_machines();
-    let cols = columns(machines, area.width);
+    let total = files.len(rows);
+    let content_w = |w: u16| 2 + columns(machines, w).iter().map(|c| c.1).sum::<u16>();
+    // Rows below the header, and whether each bar shows.
+    let mut height = area.height - 1;
+    let mut vbar = total > usize::from(height);
+    let mut width = area.width - u16::from(vbar);
+    let mut hbar = content_w(width) > width;
+    if hbar && height > 1 {
+        height -= 1;
+        vbar = total > usize::from(height);
+        width = area.width - u16::from(vbar);
+        hbar = content_w(width) > width;
+    } else {
+        hbar = false;
+    }
+    let full = content_w(width);
+    let cols = columns(machines, width);
+    files.page = usize::from(height);
+    files.scroll = files.scroll.min(total.saturating_sub(files.page));
+    let hext = Extent::new(files.hscroll, usize::from(full), usize::from(width));
+    files.hscroll = files.hscroll.min(hext.max());
+    let shift = files.hscroll as u16;
     let view = *files.view();
-    let mut x = area.x + 1;
-    buf.set_style(Rect::new(area.x, area.y, area.width, 1), PANEL.patch(MUTED));
+
+    let mut tmp = Buffer::empty(Rect::new(0, 0, full, height + 1));
+    tmp.set_style(Rect::new(0, 0, full, 1), PANEL.patch(MUTED));
+    tmp.set_style(Rect::new(0, 1, full, height), PANEL);
+    let mut headers = Vec::new();
+    let mut x = 1;
     for &(title, w, key, right) in &cols {
         let mark = match key {
             Some(k) if k == view.sort => {
@@ -298,22 +330,17 @@ fn table(
         } else {
             x
         };
-        buf.set_string(
+        tmp.set_string(
             tx,
-            area.y,
+            0,
             &text,
             PANEL.patch(MUTED).add_modifier(Modifier::BOLD),
         );
         if let Some(key) = key {
-            push(Rect::new(x, area.y, w, 1), FilesHit::Header(key));
+            headers.push((x, w, key));
         }
         x += w;
     }
-    let list = Rect::new(area.x, area.y + 1, area.width, area.height - 1);
-    files.page = usize::from(list.height);
-    let total = files.len(rows);
-    files.scroll = files.scroll.min(total.saturating_sub(files.page));
-    push(list, FilesHit::List);
     let lines: Vec<(Vec<String>, Style)> = if machines {
         files
             .machine_order(rows)
@@ -355,16 +382,17 @@ fn table(
             })
             .collect()
     };
+    let shown = lines.len();
     for (i, (cells, style)) in lines.into_iter().enumerate() {
         let index = files.scroll + i;
-        let rect = Rect::new(list.x, list.y + i as u16, list.width, 1);
+        let y = 1 + i as u16;
         let style = if index == files.cursor {
             FOCUS
         } else {
             PANEL.patch(style)
         };
-        buf.set_style(rect, style);
-        let mut x = rect.x + 1;
+        tmp.set_style(Rect::new(0, y, full, 1), style);
+        let mut x = 1;
         for (cell, &(_, w, _, right)) in cells.iter().zip(&cols) {
             let text = fit(cell, usize::from(w.saturating_sub(1)));
             let tx = if right {
@@ -372,13 +400,60 @@ fn table(
             } else {
                 x
             };
-            buf.set_string(tx, rect.y, &text, style);
+            tmp.set_string(tx, y, &text, style);
             x += w;
         }
-        push(rect, FilesHit::Row(index));
     }
-    if files.loading && files.shown_entries().next().is_none() && !machines {
-        buf.set_string(list.x + 2, list.y, "loading…", PANEL.patch(MUTED));
+    if files.loading && shown == 0 && !machines {
+        tmp.set_string(2, 1, "loading…", PANEL.patch(MUTED));
+    }
+    // Copy the visible columns.
+    for y in 0..=height {
+        for x in 0..width {
+            if let Some(cell) = tmp.cell((x + shift, y)) {
+                buf[(area.x + x, area.y + y)] = cell.clone();
+            }
+        }
+    }
+    for (x, w, key) in headers {
+        let left = x.max(shift);
+        let right = (x + w).min(shift + width);
+        if left < right {
+            push(
+                Rect::new(area.x + left - shift, area.y, right - left, 1),
+                FilesHit::Header(key),
+            );
+        }
+    }
+    let list = Rect::new(area.x, area.y + 1, width, height);
+    push(list, FilesHit::List);
+    for i in 0..shown {
+        let rect = Rect::new(list.x, list.y + i as u16, width, 1);
+        push(rect, FilesHit::Row(files.scroll + i));
+    }
+    files.bars = [None, None];
+    let vext = Extent::new(files.scroll, total, files.page);
+    if vbar {
+        let track = Rect::new(area.right() - 1, list.y, 1, height);
+        buf.set_style(track, PANEL);
+        scroll::draw(buf, Axis::Y, track, vext);
+        files.bars[0] = Some((track, vext));
+        push(track, FilesHit::Bar(Axis::Y));
+    }
+    if hbar {
+        let track = Rect::new(area.x, list.bottom(), width, 1);
+        buf.set_style(track, PANEL);
+        scroll::draw(
+            buf,
+            Axis::X,
+            track,
+            Extent::new(files.hscroll, usize::from(full), usize::from(width)),
+        );
+        files.bars[1] = Some((
+            track,
+            Extent::new(files.hscroll, usize::from(full), usize::from(width)),
+        ));
+        push(track, FilesHit::Bar(Axis::X));
     }
 }
 
@@ -535,5 +610,20 @@ mod tests {
             &mut |r, h| hits.push((r.y, h)),
         );
         assert!(hits.contains(&(4, FilesHit::Row(0))));
+        // Narrower than the columns: a horizontal bar on the last list row, columns shift.
+        let narrow = Rect::new(1, 1, 40, 12);
+        hits.clear();
+        render(
+            &mut f,
+            &[],
+            &|_| "Local".into(),
+            narrow,
+            &mut buf,
+            &mut |r, h| hits.push((r.y, h)),
+        );
+        assert!(hits.contains(&(11, FilesHit::Bar(Axis::X))));
+        assert!(!hits.iter().any(|h| h.1 == FilesHit::Bar(Axis::Y)));
+        f.hscroll_by(99);
+        assert_eq!(f.hscroll, 62 - 40);
     }
 }

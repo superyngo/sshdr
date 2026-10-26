@@ -6,6 +6,7 @@ mod app;
 mod dialog;
 mod files;
 mod menu;
+mod scroll;
 mod server;
 mod split;
 mod state;

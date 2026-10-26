@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 pub(super) use listing::{Entry, Listing};
 pub(super) use render::render;
 
+use ratatui::layout::Rect;
+
+use super::scroll::{Axis, Extent};
 use super::transport::LOCAL_KEY;
 use super::wm::WinId;
 
@@ -165,6 +168,8 @@ pub(super) enum FilesHit {
     Row(usize),
     /// List space below the rows.
     List,
+    /// A scrollbar of the list (B32).
+    Bar(Axis),
 }
 
 /// What app.rs does for a **Files** window.
@@ -198,6 +203,10 @@ pub(super) struct Files {
     shown: Vec<usize>,
     pub cursor: usize,
     pub scroll: usize,
+    /// First content column shown when the columns are wider than the list (B32).
+    pub hscroll: usize,
+    /// Vertical and horizontal bar tracks with their extents, from the last draw.
+    pub bars: [Option<(Rect, Extent)>; 2],
     /// List rows that fit, from the last draw.
     pub page: usize,
     pub tab: RibbonTab,
@@ -226,6 +235,8 @@ impl Files {
             shown: Vec::new(),
             cursor: 0,
             scroll: 0,
+            hscroll: 0,
+            bars: [None, None],
             page: 1,
             tab: RibbonTab::Home,
             collapsed: false,
@@ -507,6 +518,12 @@ impl Files {
         self.keep_visible();
     }
 
+    /// Shift+wheel or wheel left/right: move the columns.
+    pub fn hscroll_by(&mut self, delta: isize) {
+        let max = self.bars[1].map_or(0, |(_, e)| e.max());
+        self.hscroll = self.hscroll.saturating_add_signed(delta).min(max);
+    }
+
     /// Wheel: move the list, not the cursor.
     pub fn scroll_by(&mut self, delta: isize, rows: &[MachineRow]) {
         let max = self.len(rows).saturating_sub(self.page);
@@ -576,7 +593,7 @@ impl Files {
                 }
                 None
             }
-            FilesHit::List => None,
+            FilesHit::List | FilesHit::Bar(_) => None,
         }
     }
 

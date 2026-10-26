@@ -31,6 +31,7 @@ use crate::pane::desk_mirror::DeskMirror as Mirror;
 use crate::raw_input::{parse_sgr_mouse_report, RawInputByteFramer};
 
 mod files_win;
+mod overflow;
 
 /// Desk command prefix (Ctrl+\); the next key is a desk command.
 const PREFIX: u8 = 0x1c;
@@ -280,6 +281,8 @@ struct App {
     bar: Place,
     bar_drag: Option<BarDrag>,
     split_drag: Option<SplitDrag>,
+    /// Scrollbar drag (B32): in a **Files** window, or the menu (`None`).
+    scroll_drag: Option<(Option<WinId>, super::scroll::BarDrag)>,
     ratios: RatioSender,
 }
 
@@ -1272,6 +1275,7 @@ impl App {
                                 self.run_action(action);
                             }
                         }
+                        Some(Hit::Menu(MenuHit::Bar)) => self.menu_bar_press((column, row)),
                         Some(Hit::Menu(MenuHit::Body)) => {}
                         _ => self.menu = None,
                     }
@@ -1375,7 +1379,9 @@ impl App {
                 }
             }
             MouseEventKind::Drag(button) => {
-                if let Some(split) = self.split_drag.as_mut() {
+                if self.scroll_drag.is_some() {
+                    self.scroll_drag_to((column, row));
+                } else if let Some(split) = self.split_drag.as_mut() {
                     split.send((column, row), false, &self.ratios);
                 } else if let Some(bar_drag) = self.bar_drag {
                     match bar_drag {
@@ -1409,6 +1415,7 @@ impl App {
                 }
             }
             MouseEventKind::Up(button) => {
+                self.scroll_drag = None;
                 if let Some(mut split) = self.split_drag.take() {
                     split.send((column, row), true, &self.ratios);
                 } else if let Some(bar_drag) = self.bar_drag.take() {
@@ -1438,19 +1445,7 @@ impl App {
                     }
                 }
             }
-            MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
-                let up = mouse.kind == MouseEventKind::ScrollUp;
-                if let Some(Hit::Files(id, _)) = self.hits.hit(column, row) {
-                    self.files_scroll(id, up);
-                } else if let Some(Hit::Content(id, pane)) = self.hits.hit(column, row) {
-                    if let Some((x, y)) = self.content_point(id, pane, column, row) {
-                        if let Some(session) = self.session(id, pane) {
-                            session.scroll(up, x, y);
-                        }
-                    }
-                }
-            }
-            _ => {}
+            _ => self.wheel(mouse),
         }
     }
 
@@ -1922,6 +1917,7 @@ fn start_menu() -> Menu<Action> {
         above: true,
         items,
         highlighted: 0,
+        top: 0,
     }
 }
 
@@ -2148,6 +2144,7 @@ pub(super) fn run() -> io::Result<i32> {
         bar: Place::default(),
         bar_drag: None,
         split_drag: None,
+        scroll_drag: None,
         ratios: RatioSender::default(),
     };
     let reattached = snap.workspaces.len();
