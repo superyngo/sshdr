@@ -96,7 +96,7 @@ Window**.
 _Avoid_: pane (for this concept), frame.
 
 **Native Window**:
-A **Window** drawn by the **Desktop** itself (**Machines Folder**, file manager, settings); it can
+A **Window** drawn by the **Desktop** itself (**Files**, settings); it can
 take part in drag-and-drop and the **File Clipboard**.
 _Avoid_: built-in app.
 
@@ -121,7 +121,7 @@ Hiding a **Window** into its **Task**'s **Taskbar** button, from which it is res
 _Avoid_: iconify, hide.
 
 **Start Menu**:
-The **Desktop** menu that launches **Apps**, the **Machines Folder**, and settings.
+The **Desktop** menu that launches **Apps**, **Files** (also at its `Machines` root), and settings.
 _Avoid_: launcher, app menu.
 
 **Snap**:
@@ -129,8 +129,8 @@ Dropping a dragged **Window** on a screen edge to give it a half or the whole **
 _Avoid_: tiling, docking.
 
 **Machines Folder**:
-The **Native Window** listing every **Machine**, opened from the **Start Menu**; the entry point
-for connecting to **Machines**; opening a **Server Tier** **Machine** shows its windows.
+The `Machines` root of **Files**, listing every **Machine**; the entry point for connecting to
+**Machines**; opening Local browses its home, opening a connected **Machine** shows its windows.
 _Avoid_: My Computer, host list.
 
 **Files**:

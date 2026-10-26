@@ -1,6 +1,6 @@
 # Desk Files
 
-Status: Approved (2026-10-25), not implemented
+Status: Approved (2026-10-25); F1 landed 2026-10-26
 Backlog: B16 (Local), B17 (remote); B27 decided by [ADR 0009](../adr/0009-files-is-one-app-task.md)
 
 One file manager **App** for every **Machine**, drawn by the **Desktop** as **Native Windows**.

@@ -4,6 +4,13 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ## [Unreleased]
 
+### 2026-10-26
+
+- feat: desk files window replaces the machines folder (Files F1): ribbon, breadcrumbs, filter,
+  sortable list, status bar, background listing with change polling, Open in terminal, one
+  **Files** **Task**; view defaults and open windows saved in `desk.json`.
+- docs: backlog files column widths and window scrolling (B31, B32).
+
 ### 2026-10-25
 
 - docs: record the desk files design: spec `2026-10-25-desk-files.md` (ribbon, list and grid,

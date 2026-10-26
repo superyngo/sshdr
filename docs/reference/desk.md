@@ -30,19 +30,43 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 | Divider between panes | drag | resize the split (`layout.set_split_ratio`, ratio 0.1–0.9) |
 | Border | drag | resize |
 | Content | any | forwarded to the pane under the pointer |
-| `⊞ Start` | click | **Start Menu**: Machines (the **Machines Folder**), Tile all, Quit desk |
+| `⊞ Start` | click | **Start Menu**: Files (Local home), Machines (**Files** at the `Machines` root; raises one already there), Tile all, Quit desk |
 | **Task** button | click | the **Machine**'s windows (`▁` = minimized); choosing one restores and raises it |
 | **Task** button | right click | New window, Minimize all, Restore all, then Disconnect (connected **Machine**, **Server** or **SSH Tier**) or Connect |
 | **Taskbar** space without a button | drag | move the bar to the screen edge nearest the pointer (the landing place is highlighted) |
 | **Taskbar** space without a button | right click | Top, Bottom, Left, Right (`•` marks the current one), Collapse or Expand (left or right only), Larger, Smaller (not while collapsed) |
 | Thin line along the **Taskbar** (`▁▔▏▕`, under windows) | drag | resize: 1–4 rows at the top or bottom, 12–40 columns at the left or right |
 
-| **Machines Folder** row | double click, Enter | connect (see below); a connected **Machine** raises its windows |
-| **Machines Folder** row | right click | Connect (not connected); Show windows, New window, Disconnect (connected, **Server** or **SSH Tier** alike); Show windows, New window (Local) |
+| **Files**: `Machines` row | double click, Enter | Local: browse its home; another **Machine**: connect (see below), or raise its windows when connected (browsing remote files is B17) |
+| **Files**: `Machines` row | right click | Connect (not connected); Show windows, New window, Disconnect (connected, **Server** or **SSH Tier** alike); Show windows, New window (Local) |
 | `«` / `»` on the last row of a left or right **Taskbar** | click | collapse it to 4 columns / expand it again (as herdr's sidebar) |
 
 A top or bottom **Taskbar** wraps its **Task** buttons onto further rows; a left or right one
 shows Start on the first row, one **Task** per row below, and the hint and `«` on the last row.
+
+## Files
+
+**Files** is the file manager **App** (spec `docs/spec/2026-10-25-desk-files.md`, ADR 0009); all
+its windows share one **Files** **Task** after the **Machine** buttons. A window shows the
+`Machines` root (the former **Machines Folder**) or a folder on Local; F1 builds the list view.
+
+| Part | Use |
+|---|---|
+| Ribbon tabs Home, View, Machine; `«`/`»` | choose the command row; collapse the ribbon to the tab row (saved per window) |
+| Home | Open, Open in terminal (a new tab working in the folder, or the folder under the cursor, in the most recently used Local **Terminal Window**; a new window when there is none), Refresh; Cut to New folder are shown but come with F3 |
+| View | sort by name, size, modified, kind (`Machines`: name, status), ascending or descending, folders first, hidden files (`.` names), Apply to all folders (`Machines`: Make default); Grid comes with F2 |
+| Machine (the **Machine** under the cursor, or the one shown) | Connect or Disconnect, New window, Show windows |
+| `‹ › ↑` and breadcrumbs `Machines › Local › ~ › repos` | back, forward, parent (`Machines` above `/`); a crumb opens that place; long paths drop middle crumbs as `…` |
+| `⌕ filter` (click, `/`, `^F`) | narrows the shown names as typed; Enter keeps it, Esc clears it |
+| Column header | sort by it; again reverses (`▲`/`▼`) |
+| Row | click selects; double click or Enter opens a folder (files open with **File Associations**, F4) |
+| Wheel | scrolls the list |
+| Keys | arrows, PgUp/PgDn, Home/End move; Backspace parent; Alt+←/→ back/forward; `^R` refresh |
+| Status bar | items (shown of total), selection and its size, free space on the volume, view and sort, connection state, loading, last error |
+
+Folders are read on a background thread. Every second the desk checks each open Local folder's
+modification time and lists it again when it changed. Names sort case-insensitively with numbers
+compared as numbers (`f9` before `f10`).
 Collapsed, it shows `⊞`, each **Task** as its first character and window count (`L4`), and `»`;
 its buttons work as before, and the bar cannot be resized until expanded. Menus
 opened from the bar open on the desk side of it; maximized windows follow the bar.
@@ -75,7 +99,7 @@ Ctrl+\ then: `n` new window (workspace) in the focused window's **Task** · `w` 
 
 ## Machines
 
-The **Machines Folder** lists Local, every enabled saved **Machine** (`herdr machine add`, read
+The `Machines` root of **Files** lists Local, every enabled saved **Machine** (`herdr machine add`, read
 from the endpoint catalog), and the **Machines** saved with `herdr machine add --ssh-only`
 (`ssh-machines.json`, default Session); both files are read only. The **Tier** of every
 **Machine** is detected on connect, whichever file it came from. Status per row: `Local`, `not connected`,
@@ -122,17 +146,22 @@ layout has been unchanged for 1 s, and on quit (temporary file, then rename):
 per window the position, size, maximize state, minimize state, and stacking order, keyed by the
 workspace id (local) or `<profile id>/<workspace id>` (**Machine**) in `workspace`, plus the
 **Machines** that were connected, the **Taskbar** edge, size, and collapse state (`taskbar`, omitted at the
-default bottom, 1 row), and the local `ssh` workspaces with their **Machine** (`ssh_workspaces`).
+default bottom, 1 row), the local `ssh` workspaces with their **Machine** (`ssh_workspaces`), the
+**Files** view and sort defaults per location kind (`files_views`: `machines`, `folders`), and each
+**Files** window (`files`: geometry, location, its own views, ribbon collapse). A new **Files**
+window starts with the defaults; View › Apply to all folders (or Make default) sets them. Nothing
+is remembered per folder.
 Entries of builds before B25 (keyed by terminal id) match no window, so those windows open
 stacked once.
 The next start restores the layout and reconnects those **Machines**; a **Machine**'s windows get their saved place when they open. Windows without an entry open stacked on top.
 
 ## Limits
 
-- Remote **Machines** need OpenSSH ControlMaster (Unix); the **Machines Folder** cannot add or
+- Remote **Machines** need OpenSSH ControlMaster (Unix); **Files** cannot add or
   remove **Machines** (`herdr machine add|remove`).
 - Kitty keyboard protocol is not negotiated over `terminal session control` (legacy key bytes only).
 - Choosing a tab or pane also changes the **Server**'s focused workspace, tab, and pane, so a herdr
   shell **Client** on the same **Session** follows the desk, and the other way round (ADR 0008).
-- The **Machines Folder** has no **Taskbar** button; where **Native Windows** belong is open.
+- **Files** lists Local folders only; remote **Machines** come with B17. No selection of several
+  items, file operations, or grid yet (F2, F3).
 - Not yet run on Windows (V2).
