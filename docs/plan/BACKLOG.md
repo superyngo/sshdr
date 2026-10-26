@@ -37,6 +37,8 @@ Deferred by ADR 0006 (2026-10-24); resume when **Fleet** and **Remote Backup** r
 | B5 | Reconcile dependencies after ADR 0004: `russh`/`russh-sftp`/`SessionPool` likely dropped (transport is managed OpenSSH); still check `unicode-width` 0.1 vs 0.2, `chrono` vs `time`, `rusqlite` | sshi and herdr `Cargo.toml` | 2026-10-08 |
 | B9 | Decide where **Fleet** dispatch and aggregation live: in the **Client**, in the local **Server** (survives detach, reachable from CLI), or the CLI only | `docs/reference/server-client-remote.md` §4; AGENTS.md runtime/client boundary guardrail; ADR 0004 | 2026-10-08 |
 | B10 | Store **Fleet** data (**Groups**, shell type) in an sshdr-owned file keyed by profile id, not in `endpoints.json` | `src/client/endpoint/catalog.rs` `deny_unknown_fields`; ADR 0004 | 2026-10-08 |
+| B31 | Evaluate resizable column widths in the **Files** list view (drag a header edge; saved with the view) | spec `2026-10-25-desk-files.md` Views; `src/cli/desk/files/` | 2026-10-26 | P3 | M | Decision recorded; if accepted, dragging a header edge resizes the column and the width survives restart |
+| B32 | Overflow scrolling in every **Window**: wheel and draggable scrollbars on x and y for **Native Windows** (Files list, menus, dialogs), reusing herdr's terminal scroll handling (`src/client/shell/mouse.rs` wheel and scrollbar drag) | `src/cli/desk/folder.rs` `render` (rows past the window are cut, no scroll); `src/client/shell/mouse.rs` | 2026-10-26 | P2 | M | Content larger than its **Window** scrolls by wheel and scrollbar drag on both axes; Terminal Windows keep herdr's behavior |
 
 ## Done
 
