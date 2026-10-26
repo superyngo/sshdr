@@ -2,6 +2,7 @@
 //! ADR 0009). A window browses the `Machines` root or a folder on a **Machine**; app.rs routes
 //! events here and carries out the [`Request`]s.
 
+mod grid;
 pub(super) mod listing;
 mod render;
 
@@ -66,10 +67,20 @@ impl SortKey {
     }
 }
 
+/// List (columns) or Grid (cells) (F2).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum Layout {
+    #[default]
+    List,
+    Grid,
+}
+
 /// View and sort of one location kind; **Client** state in `desk.json` (ADR 0009).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub(super) struct View {
+    pub layout: Layout,
     pub sort: SortKey,
     pub desc: bool,
     pub folders_first: bool,
@@ -79,6 +90,7 @@ pub(super) struct View {
 impl Default for View {
     fn default() -> Self {
         Self {
+            layout: Layout::List,
             sort: SortKey::Name,
             desc: false,
             folders_first: true,
@@ -139,8 +151,9 @@ pub(super) enum Cmd {
     Open,
     OpenTerminal,
     Refresh,
-    /// Shown, not yet built (grid F2, file operations F3).
+    /// Shown, not yet built (file operations F3).
     Later(&'static str),
+    Layout(Layout),
     Sort(SortKey),
     Desc,
     FoldersFirst,
@@ -207,8 +220,10 @@ pub(super) struct Files {
     pub hscroll: usize,
     /// Vertical and horizontal bar tracks with their extents, from the last draw.
     pub bars: [Option<(Rect, Extent)>; 2],
-    /// List rows that fit, from the last draw.
+    /// List rows (grid: cell rows) that fit, from the last draw.
     pub page: usize,
+    /// Items per row: 1 in List, the cells across in Grid; from the last draw.
+    pub cols: usize,
     pub tab: RibbonTab,
     pub collapsed: bool,
     pub error: Option<String>,
@@ -238,6 +253,7 @@ impl Files {
             hscroll: 0,
             bars: [None, None],
             page: 1,
+            cols: 1,
             tab: RibbonTab::Home,
             collapsed: false,
             error: None,
@@ -524,18 +540,24 @@ impl Files {
         self.hscroll = self.hscroll.saturating_add_signed(delta).min(max);
     }
 
+    /// Lines of the list: items in List, rows of cells in Grid.
+    pub fn lines(&self, rows: &[MachineRow]) -> usize {
+        self.len(rows).div_ceil(self.cols.max(1))
+    }
+
     /// Wheel: move the list, not the cursor.
     pub fn scroll_by(&mut self, delta: isize, rows: &[MachineRow]) {
-        let max = self.len(rows).saturating_sub(self.page);
+        let max = self.lines(rows).saturating_sub(self.page);
         self.scroll = self.scroll.saturating_add_signed(delta).min(max);
     }
 
     pub fn keep_visible(&mut self) {
         let page = self.page.max(1);
-        if self.cursor < self.scroll {
-            self.scroll = self.cursor;
-        } else if self.cursor >= self.scroll + page {
-            self.scroll = self.cursor + 1 - page;
+        let line = self.cursor / self.cols.max(1);
+        if line < self.scroll {
+            self.scroll = line;
+        } else if line >= self.scroll + page {
+            self.scroll = line + 1 - page;
         }
     }
 
@@ -614,6 +636,10 @@ impl Files {
                 self.error = Some(format!("{what} comes in a later phase"));
                 None
             }
+            Cmd::Layout(layout) => {
+                self.set_view(|v| v.layout = layout);
+                None
+            }
             Cmd::Sort(key) => {
                 self.set_view(|v| v.sort = key);
                 None
@@ -662,10 +688,14 @@ impl Files {
             }
             return None;
         }
-        let page = isize::try_from(self.page.max(1)).unwrap_or(1);
+        let cols = isize::try_from(self.cols.max(1)).unwrap_or(1);
+        let page = isize::try_from(self.page.max(1)).unwrap_or(1) * cols;
+        let grid = self.view().layout == Layout::Grid;
         match chunk {
-            b"\x1b[A" | b"\x1bOA" => self.move_cursor(-1, rows),
-            b"\x1b[B" | b"\x1bOB" => self.move_cursor(1, rows),
+            b"\x1b[A" | b"\x1bOA" => self.move_cursor(-cols, rows),
+            b"\x1b[B" | b"\x1bOB" => self.move_cursor(cols, rows),
+            b"\x1b[D" | b"\x1bOD" if grid => self.move_cursor(-1, rows),
+            b"\x1b[C" | b"\x1bOC" if grid => self.move_cursor(1, rows),
             b"\x1b[5~" => self.move_cursor(-page, rows),
             b"\x1b[6~" => self.move_cursor(page, rows),
             b"\x1b[H" | b"\x1bOH" | b"\x1b[1~" => self.move_cursor(isize::MIN / 2, rows),
@@ -817,6 +847,26 @@ mod tests {
             free: None,
         });
         f
+    }
+
+    #[test]
+    fn grid_layout_loads_by_default_as_list_and_moves_by_rows() {
+        let old: View = serde_json::from_str(r#"{"sort":"size"}"#).unwrap_or_default();
+        assert_eq!((old.layout, old.sort), (Layout::List, SortKey::Size));
+        let mut f = files_with((0..10).map(|i| entry(&format!("f{i}"), false, 1)).collect());
+        f.command(Cmd::Layout(Layout::Grid), &[]);
+        assert_eq!(f.view().layout, Layout::Grid);
+        let saved = serde_json::to_string(f.view()).unwrap_or_default();
+        assert!(saved.contains(r#""layout":"grid""#), "{saved}");
+        (f.cols, f.page) = (3, 2);
+        f.key(b"\x1b[B", &[]);
+        f.key(b"\x1b[C", &[]);
+        assert_eq!(f.cursor, 4);
+        f.key(b"\x1b[B", &[]);
+        f.key(b"\x1b[B", &[]);
+        // Item 10 is on line 3 of 4: the view scrolls one line.
+        assert_eq!((f.cursor, f.scroll), (9, 2));
+        assert_eq!(f.lines(&[]), 4);
     }
 
     fn names(f: &Files) -> Vec<&str> {

@@ -9,14 +9,14 @@ use ratatui::{
     style::{Color, Modifier, Style},
 };
 
-use super::{crumbs, Cmd, Files, FilesHit, Location, MachineRow, RibbonTab, SortKey};
+use super::{crumbs, grid, Cmd, Files, FilesHit, Layout, Location, MachineRow, RibbonTab, SortKey};
 use crate::cli::desk::menu::{fit, ACCENT, FOCUS, MUTED, PANEL};
 use crate::cli::desk::scroll::{self, Axis, Extent};
 use crate::cli::desk::text_width;
 
 const BAR: Style = Style::new().bg(Color::Indexed(238)).fg(Color::White);
-const FOLDER: Style = Style::new().fg(Color::LightBlue);
-const ALERT: Style = Style::new().fg(Color::LightRed);
+pub(super) const FOLDER: Style = Style::new().fg(Color::LightBlue);
+pub(super) const ALERT: Style = Style::new().fg(Color::LightRed);
 const FILTER_W: u16 = 18;
 
 /// A ribbon command as drawn: label, command, enabled.
@@ -52,7 +52,10 @@ pub(in crate::cli::desk) fn render(
     y += 1;
     let status = Rect::new(inner.x, inner.bottom() - 1, inner.width, 1);
     let list = Rect::new(inner.x, y, inner.width, status.y.saturating_sub(y));
-    if list.height >= 2 {
+    if files.view().layout == Layout::Grid {
+        grid::draw(files, rows, list, buf, push);
+    } else if list.height >= 2 {
+        files.cols = 1;
         table(files, rows, list, buf, push);
     }
     status_bar(files, rows, status, buf);
@@ -98,9 +101,18 @@ fn commands(files: &Files, rows: &[MachineRow]) -> Vec<Item> {
         RibbonTab::View => {
             let view = files.view();
             let machines = files.at_machines();
+            let mark = |on: bool| if on { "•" } else { " " };
             let mut items = vec![
-                (String::from("• List"), None, false),
-                item("Grid", Cmd::Later("Grid"), false),
+                item(
+                    &format!("{}List", mark(view.layout == Layout::List)),
+                    Cmd::Layout(Layout::List),
+                    true,
+                ),
+                item(
+                    &format!("{}Grid", mark(view.layout == Layout::Grid)),
+                    Cmd::Layout(Layout::Grid),
+                    true,
+                ),
                 gap(),
             ];
             let keys: &[SortKey] = if machines {
@@ -484,7 +496,12 @@ fn status_bar(files: &Files, rows: &[MachineRow], row: Rect, buf: &mut Buffer) {
     }
     let order = if view.desc { "▼" } else { "▲" };
     parts.push(format!(
-        "list · {}{order}",
+        "{} · {}{order}",
+        if view.layout == Layout::Grid {
+            "grid"
+        } else {
+            "list"
+        },
         view.sort.label(files.at_machines())
     ));
     if let Some(m) = files.folder().and_then(|_| files.machine(rows)) {
@@ -625,5 +642,47 @@ mod tests {
         assert!(!hits.iter().any(|h| h.1 == FilesHit::Bar(Axis::Y)));
         f.hscroll_by(99);
         assert_eq!(f.hscroll, 62 - 40);
+    }
+
+    #[test]
+    fn grid_cells_report_hits_and_scroll() {
+        let mut f = Files::new(1, Location::home(LOCAL_KEY), Views::default());
+        let generation = f.begin_listing().map_or(0, |(g, _)| g);
+        let entries = (0..9)
+            .map(|i| Entry {
+                name: format!("file-{i}"),
+                dir: i == 0,
+                size: 1,
+                modified: None,
+                kind: "file".into(),
+            })
+            .collect();
+        f.listed(Listing {
+            generation,
+            entries: Ok(entries),
+            stamp: None,
+            free: None,
+        });
+        f.command(Cmd::Layout(Layout::Grid), &[]);
+        // 40 wide, list rows 4..11 (two cell rows): 9 items in 2 across overflow.
+        let inner = Rect::new(1, 1, 40, 12);
+        let mut buf = Buffer::empty(Rect::new(0, 0, 42, 14));
+        let mut hits = Vec::new();
+        render(
+            &mut f,
+            &[],
+            &|_| "Local".into(),
+            inner,
+            &mut buf,
+            &mut |r, h| hits.push((r.x, r.y, h)),
+        );
+        assert_eq!((f.cols, f.page), (2, 2));
+        assert!(hits.contains(&(1, 4, FilesHit::Row(0))));
+        assert!(hits.contains(&(15, 4, FilesHit::Row(1))));
+        assert!(hits.contains(&(1, 7, FilesHit::Row(2))));
+        assert!(hits.iter().any(|h| h.2 == FilesHit::Bar(Axis::Y)));
+        assert!(!hits.iter().any(|h| matches!(h.2, FilesHit::Header(_))));
+        let line = |y: u16| (0..42).map(|x| buf[(x, y)].symbol()).collect::<String>();
+        assert!(line(5).contains("file-0") && line(12).contains("grid"));
     }
 }
