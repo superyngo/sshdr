@@ -7,6 +7,15 @@ use super::{App, Hit};
 use crate::cli::desk::scroll::{Axis, BarDrag};
 use crate::cli::desk::wm::WinId;
 
+/// A drag inside a **Native Window** or menu, until the button is released.
+#[derive(Debug, Clone, Copy)]
+pub(super) enum NativeDrag {
+    /// A scrollbar thumb: of a **Files** window, or the menu (`None`).
+    Bar(Option<WinId>, BarDrag),
+    /// A selection box in a **Files** window (F3a).
+    Box(WinId),
+}
+
 /// Rows or columns per wheel notch.
 const STEP: isize = 3;
 
@@ -62,7 +71,7 @@ impl App {
         };
         let (drag, offset) = BarDrag::press(axis, track, extent, at);
         set(f, axis, offset);
-        self.scroll_drag = Some((Some(win), drag));
+        self.scroll_drag = Some(NativeDrag::Bar(Some(win), drag));
     }
 
     pub(super) fn menu_bar_press(&mut self, at: (u16, u16)) {
@@ -75,12 +84,19 @@ impl App {
         };
         let (drag, offset) = BarDrag::press(Axis::Y, track, menu.extent(screen), at);
         menu.scroll_to(offset, screen);
-        self.scroll_drag = Some((None, drag));
+        self.scroll_drag = Some(NativeDrag::Bar(None, drag));
     }
 
     pub(super) fn scroll_drag_to(&mut self, at: (u16, u16)) {
-        let Some((target, drag)) = self.scroll_drag else {
-            return;
+        let (target, drag) = match self.scroll_drag {
+            Some(NativeDrag::Bar(target, drag)) => (target, drag),
+            Some(NativeDrag::Box(win)) => {
+                if let Some(f) = self.files.get_mut(&win) {
+                    f.box_to(at);
+                }
+                return;
+            }
+            None => return,
         };
         let offset = drag.to(at);
         match target {
@@ -94,6 +110,17 @@ impl App {
                 if let Some(menu) = self.menu.as_mut() {
                     menu.scroll_to(offset, screen);
                 }
+            }
+        }
+    }
+}
+
+impl App {
+    /// Button released: any bar or box drag ends.
+    pub(super) fn native_up(&mut self) {
+        if let Some(NativeDrag::Box(win)) = self.scroll_drag.take() {
+            if let Some(f) = self.files.get_mut(&win) {
+                f.box_end();
             }
         }
     }

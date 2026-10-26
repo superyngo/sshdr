@@ -5,6 +5,7 @@
 mod grid;
 pub(super) mod listing;
 mod render;
+mod select;
 
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
@@ -234,6 +235,13 @@ pub(super) struct Files {
     /// Tells the current listing apart from one of an earlier location.
     pub generation: u64,
     last_click: Option<(usize, Instant)>,
+    /// Selected folder entries by name (F3a).
+    selected: std::collections::BTreeSet<String>,
+    /// Shift+click ranges start here.
+    anchor: usize,
+    boxing: Option<select::Boxing>,
+    /// Shown rows or cells with their index, from the last draw (box select).
+    pub cells: Vec<(Rect, usize)>,
 }
 
 impl Files {
@@ -262,6 +270,10 @@ impl Files {
             free: None,
             generation: 0,
             last_click: None,
+            selected: std::collections::BTreeSet::new(),
+            anchor: 0,
+            boxing: None,
+            cells: Vec::new(),
         }
     }
 
@@ -330,6 +342,7 @@ impl Files {
                 self.entries = entries;
                 self.error = None;
                 self.reshow();
+                self.prune_selection();
                 self.cursor = current
                     .and_then(|name| {
                         self.shown
@@ -434,6 +447,8 @@ impl Files {
         self.filtering = false;
         self.cursor = 0;
         self.scroll = 0;
+        self.selected.clear();
+        self.boxing = None;
         self.error = None;
         self.stamp = None;
         self.free = None;
@@ -531,6 +546,7 @@ impl Files {
     pub fn move_cursor(&mut self, delta: isize, rows: &[MachineRow]) {
         let last = self.len(rows).saturating_sub(1);
         self.cursor = self.cursor.saturating_add_signed(delta).min(last);
+        self.select_cursor();
         self.keep_visible();
     }
 
@@ -565,6 +581,7 @@ impl Files {
         &mut self,
         hit: FilesHit,
         right: bool,
+        mods: crossterm::event::KeyModifiers,
         at: (u16, u16),
         rows: &[MachineRow],
     ) -> Option<Request> {
@@ -600,7 +617,9 @@ impl Files {
                 None
             }
             FilesHit::Row(index) => {
-                self.cursor = index;
+                if !(right && self.is_selected(index)) {
+                    self.select_click(index, mods);
+                }
                 let now = Instant::now();
                 let double = matches!(self.last_click,
                     Some((last, at)) if last == index && now.duration_since(at) < DOUBLE_CLICK);
@@ -685,6 +704,7 @@ impl Files {
             self.scroll = 0;
             if !self.at_machines() {
                 self.reshow();
+                self.prune_selection();
             }
             return None;
         }
@@ -706,6 +726,9 @@ impl Files {
             b"\x1b[1;3C" | b"\x1bf" => return self.forward(),
             b"/" | b"\x06" => self.filtering = true,
             b"\x12" => return Some(Request::List),
+            b" " => self.toggle_cursor(),
+            b"\x01" => self.select_all(),
+            b"\x1b" => self.clear_selection(),
             _ => {}
         }
         None
@@ -827,7 +850,7 @@ pub(super) fn crumbs(
 mod tests {
     use super::*;
 
-    fn entry(name: &str, dir: bool, size: u64) -> Entry {
+    pub(super) fn entry(name: &str, dir: bool, size: u64) -> Entry {
         Entry {
             name: name.into(),
             dir,
@@ -837,7 +860,7 @@ mod tests {
         }
     }
 
-    fn files_with(entries: Vec<Entry>) -> Files {
+    pub(super) fn files_with(entries: Vec<Entry>) -> Files {
         let mut f = Files::new(1, Location::home(LOCAL_KEY), Views::default());
         let generation = f.begin_listing().map(|(g, _)| g).unwrap_or(0);
         f.listed(Listing {
@@ -882,9 +905,21 @@ mod tests {
             entry(".hidden", false, 1),
         ]);
         assert_eq!(names(&f), ["Docs", "a.txt", "b.txt"]);
-        f.click(FilesHit::Header(SortKey::Size), false, (0, 0), &[]);
+        f.click(
+            FilesHit::Header(SortKey::Size),
+            false,
+            crossterm::event::KeyModifiers::NONE,
+            (0, 0),
+            &[],
+        );
         assert_eq!(names(&f), ["Docs", "a.txt", "b.txt"]);
-        f.click(FilesHit::Header(SortKey::Size), false, (0, 0), &[]);
+        f.click(
+            FilesHit::Header(SortKey::Size),
+            false,
+            crossterm::event::KeyModifiers::NONE,
+            (0, 0),
+            &[],
+        );
         assert!(f.view().desc);
         assert_eq!(names(&f), ["Docs", "b.txt", "a.txt"]);
         f.command(Cmd::Hidden, &[]);

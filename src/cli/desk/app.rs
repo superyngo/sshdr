@@ -282,7 +282,7 @@ struct App {
     bar_drag: Option<BarDrag>,
     split_drag: Option<SplitDrag>,
     /// Scrollbar drag (B32): in a **Files** window, or the menu (`None`).
-    scroll_drag: Option<(Option<WinId>, super::scroll::BarDrag)>,
+    scroll_drag: Option<overflow::NativeDrag>,
     ratios: RatioSender,
 }
 
@@ -1349,8 +1349,8 @@ impl App {
                         }
                     }
                     (Some(Hit::NewTab(id)), MouseButton::Left) => self.new_tab(id, None),
-                    (Some(Hit::Files(id, hit)), button) => {
-                        self.files_click(id, hit, button, (column, row));
+                    (Some(Hit::Files(id, hit)), _) => {
+                        self.files_click(id, hit, mouse);
                     }
                     (Some(Hit::Start), MouseButton::Left) => {
                         let x = self.bar.bar(self.screen).x;
@@ -1415,7 +1415,7 @@ impl App {
                 }
             }
             MouseEventKind::Up(button) => {
-                self.scroll_drag = None;
+                self.native_up();
                 if let Some(mut split) = self.split_drag.take() {
                     split.send((column, row), true, &self.ratios);
                 } else if let Some(bar_drag) = self.bar_drag.take() {

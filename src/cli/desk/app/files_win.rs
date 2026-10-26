@@ -3,9 +3,10 @@
 
 use std::path::Path;
 
-use crossterm::event::MouseButton;
+use crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{buffer::Buffer, layout::Rect};
 
+use super::overflow::NativeDrag;
 use super::{Action, App, Hit, Link, Target, LOCAL_KEY};
 use crate::cli::desk::files::{
     self, listing, Files, FilesHit, Location, MachineRow, Request, Views,
@@ -86,23 +87,25 @@ impl App {
         self.files_title(win);
     }
 
-    pub(super) fn files_click(
-        &mut self,
-        win: WinId,
-        hit: FilesHit,
-        button: MouseButton,
-        at: (u16, u16),
-    ) {
+    pub(super) fn files_click(&mut self, win: WinId, hit: FilesHit, mouse: MouseEvent) {
+        let at = (mouse.column, mouse.row);
         if let FilesHit::Bar(axis) = hit {
             self.files_bar_press(win, axis, at);
             return;
         }
+        let right = mouse.kind == MouseEventKind::Down(MouseButton::Right);
+        if let (FilesHit::List, false) = (hit, right) {
+            if let Some(f) = self.files.get_mut(&win) {
+                f.box_start(at, mouse.modifiers);
+                self.scroll_drag = Some(NativeDrag::Box(win));
+            }
+            return;
+        }
         let rows = self.machine_rows();
-        let right = button == MouseButton::Right;
         let request = self
             .files
             .get_mut(&win)
-            .and_then(|f| f.click(hit, right, at, &rows));
+            .and_then(|f| f.click(hit, right, mouse.modifiers, at, &rows));
         if let Some(request) = request {
             self.files_request(win, request);
         }

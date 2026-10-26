@@ -31,6 +31,7 @@ pub(in crate::cli::desk) fn render(
     push: &mut dyn FnMut(Rect, FilesHit),
 ) {
     buf.set_style(inner, PANEL);
+    files.cells.clear();
     if inner.height < 5 || inner.width < 24 {
         return;
     }
@@ -398,11 +399,7 @@ fn table(
     for (i, (cells, style)) in lines.into_iter().enumerate() {
         let index = files.scroll + i;
         let y = 1 + i as u16;
-        let style = if index == files.cursor {
-            FOCUS
-        } else {
-            PANEL.patch(style)
-        };
+        let style = item_style(files, index, style);
         tmp.set_style(Rect::new(0, y, full, 1), style);
         let mut x = 1;
         for (cell, &(_, w, _, right)) in cells.iter().zip(&cols) {
@@ -442,6 +439,7 @@ fn table(
     for i in 0..shown {
         let rect = Rect::new(list.x, list.y + i as u16, width, 1);
         push(rect, FilesHit::Row(files.scroll + i));
+        files.cells.push((rect, files.scroll + i));
     }
     files.bars = [None, None];
     let vext = Extent::new(files.scroll, total, files.page);
@@ -469,6 +467,17 @@ fn table(
     }
 }
 
+/// Selected: the focus colors; the cursor alone: underlined.
+pub(super) fn item_style(files: &Files, index: usize, style: Style) -> Style {
+    if files.is_selected(index) {
+        FOCUS
+    } else if index == files.cursor {
+        PANEL.patch(style).add_modifier(Modifier::UNDERLINED)
+    } else {
+        PANEL.patch(style)
+    }
+}
+
 fn status_bar(files: &Files, rows: &[MachineRow], row: Rect, buf: &mut Buffer) {
     buf.set_style(row, BAR);
     let view = files.view();
@@ -483,12 +492,11 @@ fn status_bar(files: &Files, rows: &[MachineRow], row: Rect, buf: &mut Buffer) {
         } else {
             format!("{shown} of {total} items")
         });
-        if let Some(e) = files.current_entry() {
-            parts.push(if e.dir {
-                "1 selected".to_string()
-            } else {
-                format!("1 selected ({})", human_size(e.size))
-            });
+        let (count, bytes) = files.selected_entries().fold((0, 0), |(n, b), e| {
+            (n + 1, b + if e.dir { 0 } else { e.size })
+        });
+        if count > 0 {
+            parts.push(format!("{count} selected ({})", human_size(bytes)));
         }
         if let Some(free) = files.free {
             parts.push(format!("{} free", human_size(free)));

@@ -4,9 +4,9 @@
 use ratatui::{buffer::Buffer, layout::Rect, style::Style};
 use unicode_width::UnicodeWidthChar;
 
-use super::render::{ALERT, FOLDER};
+use super::render::{item_style, ALERT, FOLDER};
 use super::{Files, FilesHit, MachineRow};
-use crate::cli::desk::menu::{fit, FOCUS, PANEL};
+use crate::cli::desk::menu::{fit, PANEL};
 use crate::cli::desk::scroll::{self, Axis, Extent};
 
 pub(super) const CELL_W: u16 = 14;
@@ -74,11 +74,7 @@ pub(super) fn draw(
         let index = first + i;
         let (col, row) = ((i % files.cols) as u16, (i / files.cols) as u16);
         let rect = Rect::new(list.x + col * CELL_W, list.y + row * CELL_H, CELL_W, CELL_H);
-        let style = if index == files.cursor {
-            FOCUS
-        } else {
-            PANEL.patch(style)
-        };
+        let style = item_style(files, index, style);
         let text = Rect::new(rect.x, rect.y, CELL_W - 1, CELL_H);
         buf.set_style(text, style);
         let w = usize::from(CELL_W - 2);
@@ -86,6 +82,7 @@ pub(super) fn draw(
         buf.set_stringn(rect.x + 1, rect.y + 1, &a, w, style);
         buf.set_stringn(rect.x + 1, rect.y + 2, &b, w, style);
         push(rect, FilesHit::Row(index));
+        files.cells.push((rect, index));
     }
     if total == 0 && files.loading && !files.at_machines() {
         buf.set_string(list.x + 2, list.y, "loading…", PANEL);
