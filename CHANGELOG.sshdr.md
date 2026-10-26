@@ -6,6 +6,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-26
 
+- feat: desk files grid view (Files F2): View › List or Grid, saved with the view; arrow keys
+  move across cells, the list scrolls by cell rows.
 - feat: desk native windows scroll on both axes (B32): Files list scrollbars and sideways
   scrolling, scrolling menus; Terminal Windows unchanged.
 - feat: desk files window replaces the machines folder (Files F1): ribbon, breadcrumbs, filter,

@@ -55,7 +55,7 @@ its windows share one **Files** **Task** after the **Machine** buttons. A window
 |---|---|
 | Ribbon tabs Home, View, Machine; `«`/`»` | choose the command row; collapse the ribbon to the tab row (saved per window) |
 | Home | Open, Open in terminal (a new tab working in the folder, or the folder under the cursor, in the most recently used Local **Terminal Window**; a new window when there is none), Refresh; Cut to New folder are shown but come with F3 |
-| View | sort by name, size, modified, kind (`Machines`: name, status), ascending or descending, folders first, hidden files (`.` names), Apply to all folders (`Machines`: Make default); Grid comes with F2 |
+| View | List or Grid (cells of a glyph and a two-line name; ←/→ move by one, ↑/↓ by a row of cells), sort by name, size, modified, kind (`Machines`: name, status), ascending or descending, folders first, hidden files (`.` names), Apply to all folders (`Machines`: Make default) |
 | Machine (the **Machine** under the cursor, or the one shown) | Connect or Disconnect, New window, Show windows |
 | `‹ › ↑` and breadcrumbs `Machines › Local › ~ › repos` | back, forward, parent (`Machines` above `/`); a crumb opens that place; long paths drop middle crumbs as `…` |
 | `⌕ filter` (click, `/`, `^F`) | narrows the shown names as typed; Enter keeps it, Esc clears it |
