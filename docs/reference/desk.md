@@ -54,7 +54,7 @@ its windows share one **Files** **Task** after the **Machine** buttons. A window
 | Part | Use |
 |---|---|
 | Ribbon tabs Home, View, Machine; `«`/`»` | choose the command row; collapse the ribbon to the tab row (saved per window) |
-| Home | Open, Open in terminal (a new tab working in the folder, or the folder under the cursor, in the most recently used Local **Terminal Window**; a new window when there is none), Refresh; Cut to New folder are shown but come with F3 |
+| Home | Open, Open in terminal (a new tab working in the folder, or the folder under the cursor, in the most recently used Local **Terminal Window**; a new window when there is none), Refresh; Cut (`^X`), Copy (`^C`), Paste (`^V`; a name taken gets ` (2)`, a cut pastes once), Rename (F2), Trash (Del; macOS `~/.Trash`, freedesktop trash on Linux, same volume only, not on Windows yet), New folder, Copy path (system clipboard over OSC 52), Undo (`^Z`: moves and renames); Shift+Del deletes permanently after a confirmation. They act on the selection, else the item under the cursor; Local only; the result shows in the status bar |
 | View | List or Grid (cells of a glyph and a two-line name; ←/→ move by one, ↑/↓ by a row of cells), sort by name, size, modified, kind (`Machines`: name, status), ascending or descending, folders first, hidden files (`.` names), Apply to all folders (`Machines`: Make default) |
 | Machine (the **Machine** under the cursor, or the one shown) | Connect or Disconnect, New window, Show windows |
 | `‹ › ↑` and breadcrumbs `Machines › Local › ~ › repos` | back, forward, parent (`Machines` above `/`); a crumb opens that place; long paths drop middle crumbs as `…` |

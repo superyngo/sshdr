@@ -6,6 +6,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-26
 
+- feat: desk files clipboard, rename, new folder and trash (Files F3b): cut, copy, paste with
+  ` (2)` names, rename, new folder, trash, Shift+Del permanent delete after a confirmation,
+  Copy path over OSC 52, undo of moves and renames; operations run off the UI thread.
 - feat: desk files multi-select (Files F3a): Shift+click range, Ctrl+click or Space toggle,
   `^A`, Esc, box select from empty list space; status bar shows the count and size.
 - feat: desk files grid view (Files F2): View › List or Grid, saved with the view; arrow keys
