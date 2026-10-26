@@ -14,7 +14,7 @@ use crate::cli::desk::files::{
 use crate::cli::desk::menu::{Menu, MenuItem};
 use crate::cli::desk::server;
 use crate::cli::desk::state::{self, DeskState};
-use crate::cli::desk::wm::WinId;
+use crate::cli::desk::wm::{HitMap, WinId};
 
 impl App {
     /// Rows of the `Machines` root, in `targets` order.
@@ -166,6 +166,12 @@ impl App {
             }
             Request::MachineMenu(key, at) => self.menu = self.machine_menu(&key, at),
             Request::OpenTerminal(machine, path) => self.open_terminal_at(&machine, &path),
+            other @ (Request::Clip { .. }
+            | Request::Paste(_)
+            | Request::Ask(_)
+            | Request::Op(_)
+            | Request::Undo
+            | Request::CopyPath(_)) => self.files_op_request(win, other),
             Request::MakeDefault => {
                 if let Some(f) = self.files.get(&win) {
                     if f.at_machines() {
@@ -246,7 +252,7 @@ impl App {
         rows: &[MachineRow],
         inner: Rect,
         buf: &mut Buffer,
-        hits: &mut Vec<(Rect, Hit)>,
+        hits: &mut HitMap<Hit>,
     ) {
         let labels: Vec<(String, String)> = self
             .targets
@@ -261,7 +267,7 @@ impl App {
         };
         if let Some(f) = self.files.get_mut(&win) {
             files::render(f, rows, &label, inner, buf, &mut |rect, hit| {
-                hits.push((rect, Hit::Files(win, hit)));
+                hits.push(rect, Hit::Files(win, hit));
             });
         }
     }

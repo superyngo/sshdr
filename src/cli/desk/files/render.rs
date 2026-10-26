@@ -94,8 +94,18 @@ fn commands(files: &Files, rows: &[MachineRow]) -> Vec<Item> {
                 item("Refresh", Cmd::Refresh, folder),
                 gap(),
             ];
-            for what in ["Cut", "Copy", "Paste", "Rename", "Trash", "New folder"] {
-                items.push(item(what, Cmd::Later(what), false));
+            let some = folder && !files.targets().is_empty();
+            for (what, cmd, on) in [
+                ("Cut", Cmd::Cut, some),
+                ("Copy", Cmd::Copy, some),
+                ("Paste", Cmd::Paste, folder),
+                ("Rename", Cmd::Rename, some),
+                ("Trash", Cmd::Trash, some),
+                ("New folder", Cmd::NewFolder, folder),
+                ("Copy path", Cmd::CopyPath, some),
+                ("Undo", Cmd::Undo, true),
+            ] {
+                items.push(item(what, cmd, on));
             }
             items
         }
@@ -517,6 +527,9 @@ fn status_bar(files: &Files, rows: &[MachineRow], row: Rect, buf: &mut Buffer) {
     }
     if files.loading {
         parts.push("loading…".to_string());
+    }
+    if let Some(notice) = &files.notice {
+        parts.push(notice.clone());
     }
     let text = format!(" {}", parts.join(" · "));
     buf.set_stringn(row.x, row.y, &text, usize::from(row.width), BAR);

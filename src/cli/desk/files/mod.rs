@@ -4,8 +4,10 @@
 
 mod grid;
 pub(super) mod listing;
+pub(super) mod ops;
 mod render;
 mod select;
+mod trash;
 
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime};
@@ -152,9 +154,16 @@ pub(super) enum Cmd {
     Open,
     OpenTerminal,
     Refresh,
-    /// Shown, not yet built (file operations F3).
-    Later(&'static str),
     Layout(Layout),
+    Cut,
+    Copy,
+    Paste,
+    Rename,
+    Trash,
+    NewFolder,
+    Delete,
+    CopyPath,
+    Undo,
     Sort(SortKey),
     Desc,
     FoldersFirst,
@@ -201,6 +210,44 @@ pub(super) enum Request {
     OpenTerminal(String, PathBuf),
     /// Save this window's view of its location kind as the default.
     MakeDefault,
+    /// Put these paths on the **File Clipboard**.
+    Clip {
+        paths: Vec<PathBuf>,
+        cut: bool,
+    },
+    /// Paste the **File Clipboard** into this folder.
+    Paste(PathBuf),
+    Ask(Ask),
+    Op(ops::Op),
+    Undo,
+    /// Put this text on the system clipboard (OSC 52).
+    CopyPath(String),
+}
+
+/// A question before an operation: a dialog's target.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum Ask {
+    Rename(PathBuf),
+    /// Create a folder in this one.
+    NewFolder(PathBuf),
+    /// Permanently delete (Shift+Del).
+    Delete(Vec<PathBuf>),
+}
+
+/// The **File Clipboard**: paths on one **Machine**, cut or copied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Clip {
+    pub machine: String,
+    pub paths: Vec<PathBuf>,
+    pub cut: bool,
+}
+
+/// State every **Files** window shares: the **File Clipboard** and the undo stack.
+#[derive(Debug, Default)]
+pub(super) struct Shared {
+    pub clip: Option<Clip>,
+    /// Each entry undoes one move or rename: `(now, was)` pairs.
+    pub undo: Vec<Vec<(PathBuf, PathBuf)>>,
 }
 
 pub(super) struct Files {
@@ -228,6 +275,8 @@ pub(super) struct Files {
     pub tab: RibbonTab,
     pub collapsed: bool,
     pub error: Option<String>,
+    /// The last operation's summary.
+    pub notice: Option<String>,
     pub loading: bool,
     /// Folder modification time of the last listing; a change re-lists it.
     pub stamp: Option<SystemTime>,
@@ -265,6 +314,7 @@ impl Files {
             tab: RibbonTab::Home,
             collapsed: false,
             error: None,
+            notice: None,
             loading: false,
             stamp: None,
             free: None,
@@ -413,6 +463,24 @@ impl Files {
         self.entries.len()
     }
 
+    /// What an operation acts on: the selection, else the cursor entry (folders only).
+    pub fn targets(&self) -> Vec<PathBuf> {
+        let Some((_, dir)) = self.folder() else {
+            return Vec::new();
+        };
+        let mut names: Vec<&str> = self.selected_entries().map(|e| e.name.as_str()).collect();
+        if names.is_empty() {
+            names.extend(self.current_entry().map(|e| e.name.as_str()));
+        }
+        names.into_iter().map(|n| dir.join(n)).collect()
+    }
+
+    /// An operation finished: its summary or error goes to the status bar.
+    pub fn done(&mut self, done: &ops::Done) {
+        self.notice = Some(done.summary.clone());
+        self.error.clone_from(&done.error);
+    }
+
     pub fn current_entry(&self) -> Option<&Entry> {
         self.shown
             .get(self.cursor)
@@ -450,6 +518,7 @@ impl Files {
         self.selected.clear();
         self.boxing = None;
         self.error = None;
+        self.notice = None;
         self.stamp = None;
         self.free = None;
         self.loading = false;
@@ -651,10 +720,42 @@ impl Files {
                 Some(Request::OpenTerminal(machine.to_string(), path))
             }
             Cmd::Refresh => Some(Request::List),
-            Cmd::Later(what) => {
-                self.error = Some(format!("{what} comes in a later phase"));
-                None
+            Cmd::Cut | Cmd::Copy => {
+                let paths = self.targets();
+                (!paths.is_empty()).then_some(Request::Clip {
+                    paths,
+                    cut: cmd == Cmd::Cut,
+                })
             }
+            Cmd::Paste => self
+                .folder()
+                .map(|(_, dir)| Request::Paste(dir.to_path_buf())),
+            Cmd::Rename => {
+                let path = self.targets().into_iter().next()?;
+                Some(Request::Ask(Ask::Rename(path)))
+            }
+            Cmd::NewFolder => {
+                let dir = self.folder()?.1.to_path_buf();
+                Some(Request::Ask(Ask::NewFolder(dir)))
+            }
+            Cmd::Trash => {
+                let paths = self.targets();
+                (!paths.is_empty()).then_some(Request::Op(ops::Op::Trash(paths)))
+            }
+            Cmd::Delete => {
+                let paths = self.targets();
+                (!paths.is_empty()).then_some(Request::Ask(Ask::Delete(paths)))
+            }
+            Cmd::CopyPath => {
+                let paths = self.targets();
+                let text = paths
+                    .iter()
+                    .map(|p| p.to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                (!text.is_empty()).then_some(Request::CopyPath(text))
+            }
+            Cmd::Undo => Some(Request::Undo),
             Cmd::Layout(layout) => {
                 self.set_view(|v| v.layout = layout);
                 None
@@ -726,6 +827,13 @@ impl Files {
             b"\x1b[1;3C" | b"\x1bf" => return self.forward(),
             b"/" | b"\x06" => self.filtering = true,
             b"\x12" => return Some(Request::List),
+            b"\x18" => return self.command(Cmd::Cut, rows),
+            b"\x03" => return self.command(Cmd::Copy, rows),
+            b"\x16" => return self.command(Cmd::Paste, rows),
+            b"\x1a" => return self.command(Cmd::Undo, rows),
+            b"\x1bOQ" | b"\x1b[12~" => return self.command(Cmd::Rename, rows),
+            b"\x1b[3~" => return self.command(Cmd::Trash, rows),
+            b"\x1b[3;2~" => return self.command(Cmd::Delete, rows),
             b" " => self.toggle_cursor(),
             b"\x01" => self.select_all(),
             b"\x1b" => self.clear_selection(),

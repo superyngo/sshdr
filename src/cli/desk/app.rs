@@ -30,6 +30,7 @@ use super::wm::{self, Desk, Edges, HitMap, WinId, WinState};
 use crate::pane::desk_mirror::DeskMirror as Mirror;
 use crate::raw_input::{parse_sgr_mouse_report, RawInputByteFramer};
 
+mod files_ops;
 mod files_win;
 mod overflow;
 
@@ -120,6 +121,7 @@ enum DialogTarget {
     CloseWindow(WinId),
     /// Disconnect an **SSH Tier** **Machine**, closing its `ssh` windows.
     Disconnect(String),
+    Files(WinId, files::Ask),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -275,6 +277,8 @@ struct App {
     files: BTreeMap<WinId, Files>,
     /// **Files** view and sort defaults (`desk.json`).
     files_views: Views,
+    /// **File Clipboard** and undo, shared by every **Files** window.
+    files_shared: files::Shared,
     /// **Machines** connected by hand: an **SSH Tier** result opens an `ssh` window.
     ssh_on_tier: Vec<String>,
     /// **Taskbar** edge and size (B21).
@@ -1094,6 +1098,7 @@ impl App {
             DeskEvent::Link(key, link) => self.set_link(&key, link),
             DeskEvent::Connected(key, result) => self.connected(&key, result),
             DeskEvent::Listed(win, listing) => self.files_listed(win, *listing),
+            DeskEvent::Done(win, done) => self.files_done(win, *done),
         }
     }
 
@@ -1522,16 +1527,7 @@ impl App {
             } else {
                 hits.push(inner, Hit::Content(w.id, 0));
             }
-            let mut files_hits = Vec::new();
-            if self.files.contains_key(&w.id) {
-                self.draw_files(
-                    w.id,
-                    &machine_rows,
-                    inner,
-                    frame.buffer_mut(),
-                    &mut files_hits,
-                );
-            }
+            self.draw_files(w.id, &machine_rows, inner, frame.buffer_mut(), &mut hits);
             // Title bar: title on the left, [_][□][×] on the right.
             let buttons_w = 9u16;
             let title_w = rect.width.saturating_sub(2 + buttons_w + 1);
@@ -1548,9 +1544,6 @@ impl App {
                 title_style,
             );
             for (rect, hit) in tab_hits {
-                hits.push(rect, hit);
-            }
-            for (rect, hit) in files_hits {
                 hits.push(rect, hit);
             }
             hits.push(
@@ -1876,6 +1869,7 @@ impl App {
             }
             DialogTarget::CloseWindow(id) => self.close_window_now(id),
             DialogTarget::Disconnect(key) => self.disconnect_now(&key),
+            DialogTarget::Files(win, ask) => self.files_answer(win, ask, text),
             _ => {}
         }
     }
@@ -2140,6 +2134,7 @@ pub(super) fn run() -> io::Result<i32> {
         stats: Stats::default(),
         files: BTreeMap::new(),
         files_views: Views::default(),
+        files_shared: files::Shared::default(),
         ssh_on_tier: Vec::new(),
         bar: Place::default(),
         bar_drag: None,
