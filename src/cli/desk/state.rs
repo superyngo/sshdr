@@ -61,6 +61,24 @@ pub(super) struct DeskState {
     /// profile id): the **Machine**'s **Task** holds them.
     #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
     pub ssh_workspaces: std::collections::BTreeMap<String, String>,
+    /// **Files** view and sort defaults per location kind (ADR 0009).
+    #[serde(default, skip_serializing_if = "super::files::Views::is_default")]
+    pub files_views: super::files::Views,
+    /// Open **Files** windows, bottom to top.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub files: Vec<SavedFiles>,
+}
+
+/// A **Files** window: geometry (its `workspace` is empty), location, and its own views.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(super) struct SavedFiles {
+    pub window: SavedWindow,
+    pub location: super::files::Location,
+    #[serde(default)]
+    pub views: super::files::Views,
+    /// The ribbon shows only its tab row.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub collapsed: bool,
 }
 
 /// Key of a window in `desk.json`: the workspace id for local windows, and
@@ -125,19 +143,22 @@ pub(super) fn capture(desk: &Desk, key: impl Fn(WinId) -> Option<String>) -> Des
         windows: desk
             .windows
             .iter()
-            .filter_map(|w| {
-                Some(SavedWindow {
-                    workspace: key(w.id)?,
-                    rect: w.rect.into(),
-                    restore: match w.state {
-                        WinState::Maximized { restore } => Some(restore.into()),
-                        WinState::Normal => None,
-                    },
-                    minimized: w.minimized,
-                })
-            })
+            .filter_map(|w| Some(saved(w, key(w.id)?)))
             .collect(),
         ..DeskState::default()
+    }
+}
+
+/// One window's geometry and flags under `key`.
+pub(super) fn saved(w: &super::wm::Window, key: String) -> SavedWindow {
+    SavedWindow {
+        workspace: key,
+        rect: w.rect.into(),
+        restore: match w.state {
+            WinState::Maximized { restore } => Some(restore.into()),
+            WinState::Normal => None,
+        },
+        minimized: w.minimized,
     }
 }
 

@@ -4,7 +4,7 @@
 
 mod app;
 mod dialog;
-mod folder;
+mod files;
 mod menu;
 mod server;
 mod split;

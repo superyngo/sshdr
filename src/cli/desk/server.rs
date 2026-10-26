@@ -641,10 +641,14 @@ fn created_tab(value: &Value) -> io::Result<TabInfo> {
 pub(super) fn create_workspace(
     target: &Target,
     label: Option<&str>,
+    cwd: Option<&str>,
 ) -> io::Result<(WorkspaceInfo, TabInfo)> {
     let mut args = vec!["workspace", "create", "--no-focus"];
     if let Some(label) = label {
         args.extend(["--label", label]);
+    }
+    if let Some(cwd) = cwd {
+        args.extend(["--cwd", cwd]);
     }
     let value = herdr_json(target, &args)?;
     let result = value.get("result").unwrap_or(&value);
@@ -661,11 +665,16 @@ pub(super) fn create_workspace(
     Ok((workspace, tab))
 }
 
-pub(super) fn create_tab(target: &Target, workspace_id: &str) -> io::Result<TabInfo> {
-    created_tab(&herdr_json(
-        target,
-        &["tab", "create", "--workspace", workspace_id, "--no-focus"],
-    )?)
+pub(super) fn create_tab(
+    target: &Target,
+    workspace_id: &str,
+    cwd: Option<&str>,
+) -> io::Result<TabInfo> {
+    let mut args = vec!["tab", "create", "--workspace", workspace_id, "--no-focus"];
+    if let Some(cwd) = cwd {
+        args.extend(["--cwd", cwd]);
+    }
+    created_tab(&herdr_json(target, &args)?)
 }
 
 pub(super) fn close_tab(target: &Target, tab_id: &str) {

@@ -32,6 +32,8 @@ pub(super) enum DeskEvent {
         String,
         Result<super::server::Snapshot, super::transport::Link>,
     ),
+    /// A **Files** window's folder listing (`files::listing::spawn`).
+    Listed(WinId, Box<super::files::Listing>),
 }
 
 /// One `terminal session control` child streaming one pane.
