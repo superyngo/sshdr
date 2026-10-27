@@ -6,6 +6,9 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-26
 
+- feat: desk files operations on remote machines (Files F5b): paste, rename, new folder, trash
+  (macOS and freedesktop), permanent delete, undo, Copy path, and dropping paths on a pane now
+  work on a remote Machine as on Local.
 - feat: desk files browse remote machines (Files F5a): double click a remote Machine to browse
   its folders over ssh; Open in terminal works there; Windows Machines report not supported.
 - feat: desk files drag and drop (Files F3c): drag the selection onto a folder or another

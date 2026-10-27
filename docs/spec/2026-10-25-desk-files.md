@@ -1,6 +1,6 @@
 # Desk Files
 
-Status: Approved (2026-10-25); F1, F2, F3 (selection, clipboard and operations, drag and drop) and F5a (browse remote **Machines**) landed 2026-10-26
+Status: Approved (2026-10-25); F1, F2, F3 (selection, clipboard and operations, drag and drop) and F5a, F5b (browse and change files on remote **Machines**) landed 2026-10-26
 Backlog: B16 (Local), B17 (remote); B27 decided by [ADR 0009](../adr/0009-files-is-one-app-task.md)
 
 One file manager **App** for every **Machine**, drawn by the **Desktop** as **Native Windows**.

@@ -166,6 +166,6 @@ The next start restores the layout and reconnects those **Machines**; a **Machin
 - Kitty keyboard protocol is not negotiated over `terminal session control` (legacy key bytes only).
 - Choosing a tab or pane also changes the **Server**'s focused workspace, tab, and pane, so a herdr
   shell **Client** on the same **Session** follows the desk, and the other way round (ADR 0008).
-- **Files** browses remote **Machines** but changes files on Local only (B17 F5b, F5c); Windows
+- **Files** changes files within one **Machine**; copying between **Machines** is B17 F5c. Windows
   **Machines** cannot be browsed.
 - Not yet run on Windows (V2).
