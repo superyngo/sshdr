@@ -488,6 +488,8 @@ pub(super) fn item_style(files: &Files, index: usize, style: Style) -> Style {
     }
 }
 
+use std::sync::atomic::Ordering::Relaxed;
+
 fn status_bar(files: &Files, rows: &[MachineRow], row: Rect, buf: &mut Buffer) {
     buf.set_style(row, BAR);
     let view = files.view();
@@ -528,7 +530,17 @@ fn status_bar(files: &Files, rows: &[MachineRow], row: Rect, buf: &mut Buffer) {
     if files.loading {
         parts.push("loading…".to_string());
     }
-    if let Some(notice) = &files.notice {
+    if let Some(t) = &files.transfer {
+        let (bytes, total) = (t.bytes.load(Relaxed), t.total.load(Relaxed));
+        parts.push(match total {
+            0 => format!("copying {} · Esc cancels", human_size(bytes)),
+            _ => format!(
+                "copying {} of {} · Esc cancels",
+                human_size(bytes),
+                human_size(total)
+            ),
+        });
+    } else if let Some(notice) = &files.notice {
         parts.push(notice.clone());
     }
     let text = format!(" {}", parts.join(" · "));

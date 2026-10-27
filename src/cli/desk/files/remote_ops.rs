@@ -8,13 +8,7 @@ use super::ops::{Done, Op};
 use super::remote;
 use crate::cli::desk::transport::Machine;
 
-const OPS: &str = r#"free() {
-  [ -e "$1/$2" ] || [ -L "$1/$2" ] || { printf %s "$1/$2"; return; }
-  case $2 in ?*.*) b=${2%.*} e=.${2##*.};; *) b=$2 e=;; esac
-  i=2; while [ -e "$1/$b ($i)$e" ] || [ -L "$1/$b ($i)$e" ]; do i=$((i+1)); done
-  printf %s "$1/$b ($i)$e"
-}
-enc() {
+const OPS: &str = r#"enc() {
   printf %s "$1" | od -An -v -tx1 | tr -s ' ' '\n' | while read -r h; do
     case $h in
       '') ;;

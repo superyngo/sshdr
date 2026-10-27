@@ -69,7 +69,17 @@ impl App {
                     return;
                 };
                 if Some(to) != machine.as_deref() {
-                    return self.files_notice(win, "copying between Machines comes later".into());
+                    let (to, into) = (to.to_string(), dir.to_path_buf());
+                    let into = match hit {
+                        FilesHit::Row(i) => f
+                            .shown_entries()
+                            .nth(i)
+                            .filter(|e| e.dir)
+                            .map_or(into.clone(), |e| into.join(&e.name)),
+                        _ => into,
+                    };
+                    let from = machine.unwrap_or_default();
+                    return self.files_transfer(other, &from, paths, to, into);
                 }
                 match hit {
                     FilesHit::Row(index) => match f.shown_entries().nth(index) {

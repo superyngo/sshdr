@@ -8,9 +8,11 @@ use base64::Engine;
 use super::{App, DialogTarget, Target, LOCAL_KEY};
 use crate::cli::desk::dialog::Dialog;
 use crate::cli::desk::files::ops::{self, Done, Op};
-use crate::cli::desk::files::remote;
+use crate::cli::desk::files::{remote, transfer};
 use crate::cli::desk::files::{Ask, Clip, Request};
 use crate::cli::desk::wm::WinId;
+use std::path::PathBuf;
+use std::sync::Arc;
 
 impl App {
     /// Requests of `files` that operate on files; the others return unhandled.
@@ -38,9 +40,8 @@ impl App {
                     self.files_notice(win, "the clipboard is empty".into());
                     return;
                 };
-                if Some(&clip.machine) != machine.as_ref() {
-                    self.files_notice(win, "copying between Machines comes later".into());
-                    return;
+                if let Some(to_key) = machine.clone().filter(|m| m != &clip.machine) {
+                    return self.files_transfer(win, &clip.machine, clip.paths, to_key, to);
                 }
                 // A cut is pasted once; a copy as often as wanted.
                 if clip.cut {
@@ -82,6 +83,42 @@ impl App {
         if let Some(machine) = machine {
             self.files_spawn(win, machine, op);
         }
+    }
+
+    /// Copy `paths` of **Machine** `from` into folder `to` of **Machine** `to_key` (F5c); a cut
+    /// stays where it was.
+    pub(super) fn files_transfer(
+        &mut self,
+        win: WinId,
+        from: &str,
+        paths: Vec<PathBuf>,
+        to_key: String,
+        to: PathBuf,
+    ) {
+        let remote = |key: &str| match self.target(key) {
+            Some(Target::Machine(m)) => Some(Some(m.clone())),
+            Some(Target::Local) => Some(None),
+            None => None,
+        };
+        let (Some(from), Some(to_machine)) = (remote(from), remote(&to_key)) else {
+            return;
+        };
+        let Some(f) = self.files.get_mut(&win) else {
+            return;
+        };
+        if f.transfer.is_some() {
+            return self.files_notice(win, "a copy into this window is running".into());
+        }
+        let progress = Arc::new(transfer::Progress::default());
+        f.transfer = Some(progress.clone());
+        f.error = None;
+        let copy = transfer::Copy {
+            from,
+            paths,
+            to_machine,
+            to,
+        };
+        transfer::spawn(win, to_key, copy, progress, self.events.clone());
     }
 
     fn files_spawn(&mut self, win: WinId, machine: String, op: Op) {

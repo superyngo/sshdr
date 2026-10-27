@@ -13,8 +13,15 @@ use crate::cli::desk::stream::DeskEvent;
 use crate::cli::desk::transport::{self, Machine};
 use crate::cli::desk::wm::WinId;
 
-/// Turns `$1`-style `~` paths into absolute ones: `p=$(x "$1")`.
+/// `x` turns `~` paths into absolute ones (`p=$(x "$1")`); `free <folder> <name>` gives a
+/// free ` (2)` name; `$F`/`$T` are the `stat` flag and format.
 pub(super) const PRELUDE: &str = r#"x() { case $1 in "~") printf %s "$HOME";; "~/"*) printf %s "$HOME/${1#"~/"}";; *) printf %s "$1";; esac; }
+free() {
+  [ -e "$1/$2" ] || [ -L "$1/$2" ] || { printf %s "$1/$2"; return; }
+  case $2 in ?*.*) b=${2%.*} e=.${2##*.};; *) b=$2 e=;; esac
+  i=2; while [ -e "$1/$b ($i)$e" ] || [ -L "$1/$b ($i)$e" ]; do i=$((i+1)); done
+  printf %s "$1/$b ($i)$e"
+}
 if stat -c %Y . >/dev/null 2>&1; then F=-c; T='%F|%s|%Y|%n'; else F=-f; T='%HT|%z|%m|%N'; fi
 "#;
 
@@ -96,7 +103,7 @@ pub(super) fn run(machine: &Machine, script: &str, args: &[&str]) -> Result<Stri
 }
 
 /// Text without ANSI escapes or carriage returns (PowerShell colors its errors).
-fn plain(text: &str) -> String {
+pub(super) fn plain(text: &str) -> String {
     let mut out = String::new();
     let mut chars = text.chars();
     while let Some(c) = chars.next() {

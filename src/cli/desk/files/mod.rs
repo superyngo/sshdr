@@ -9,6 +9,7 @@ pub(super) mod remote;
 mod remote_ops;
 mod render;
 mod select;
+pub(super) mod transfer;
 mod trash;
 
 use std::path::{Path, PathBuf};
@@ -291,6 +292,8 @@ pub(super) struct Files {
     boxing: Option<select::Boxing>,
     /// Shown rows or cells with their index, from the last draw (box select).
     pub cells: Vec<(Rect, usize)>,
+    /// A copy between **Machines** into this window's folder (F5c); Esc cancels it.
+    pub transfer: Option<std::sync::Arc<transfer::Progress>>,
 }
 
 impl Files {
@@ -324,6 +327,7 @@ impl Files {
             anchor: 0,
             boxing: None,
             cells: Vec::new(),
+            transfer: None,
         }
     }
 
@@ -475,6 +479,7 @@ impl Files {
     /// An operation finished: its summary or error goes to the status bar.
     pub fn done(&mut self, done: &ops::Done) {
         self.notice = Some(done.summary.clone());
+        self.transfer = None;
         self.error.clone_from(&done.error);
     }
 
@@ -830,6 +835,11 @@ impl Files {
             b"\x1b[3;2~" => return self.command(Cmd::Delete, rows),
             b" " => self.toggle_cursor(),
             b"\x01" => self.select_all(),
+            b"\x1b" if self.transfer.is_some() => {
+                if let Some(t) = &self.transfer {
+                    t.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             b"\x1b" => self.clear_selection(),
             _ => {}
         }

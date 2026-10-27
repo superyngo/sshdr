@@ -136,7 +136,8 @@ impl App {
         for &win in &stale {
             self.files_request(win, Request::List);
         }
-        !stale.is_empty()
+        // A running copy redraws its progress.
+        !stale.is_empty() || self.files.values().any(|f| f.transfer.is_some())
     }
 
     fn files_title(&mut self, win: WinId) {
