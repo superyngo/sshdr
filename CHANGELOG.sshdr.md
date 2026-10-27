@@ -6,6 +6,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-26
 
+- feat: desk files copy between machines (Files F5c): paste or drop across Machines copies through
+  tar with progress in the status bar; Esc cancels and leaves nothing behind.
 - feat: desk files operations on remote machines (Files F5b): paste, rename, new folder, trash
   (macOS and freedesktop), permanent delete, undo, Copy path, and dropping paths on a pane now
   work on a remote Machine as on Local.
