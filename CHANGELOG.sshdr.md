@@ -6,6 +6,8 @@ Changes made in sshdr on top of herdr. Upstream herdr changes are in `CHANGELOG.
 
 ### 2026-10-26
 
+- feat: desk files browse remote machines (Files F5a): double click a remote Machine to browse
+  its folders over ssh; Open in terminal works there; Windows Machines report not supported.
 - feat: desk files drag and drop (Files F3c): drag the selection onto a folder or another
   Files window to move it (Ctrl at the drop copies), or onto a pane to type its quoted paths.
 - feat: desk files clipboard, rename, new folder and trash (Files F3b): cut, copy, paste with

@@ -1,6 +1,6 @@
 # Desk Files
 
-Status: Approved (2026-10-25); F1, F2, F3 (selection, clipboard and operations, drag and drop) landed 2026-10-26
+Status: Approved (2026-10-25); F1, F2, F3 (selection, clipboard and operations, drag and drop) and F5a (browse remote **Machines**) landed 2026-10-26
 Backlog: B16 (Local), B17 (remote); B27 decided by [ADR 0009](../adr/0009-files-is-one-app-task.md)
 
 One file manager **App** for every **Machine**, drawn by the **Desktop** as **Native Windows**.
@@ -25,8 +25,7 @@ Local comes first; remote **Machines** follow (B17).
   Status (`Server · n`, `SSH · n`, not connected).
 - A folder on a **Machine**: `Machines › <machine> › <path>`; breadcrumbs are clickable.
 - Back, Forward, Up; Backspace goes up; a filter box narrows the shown entries.
-- Double click on a **Machine** browses its files (Local now; remote after B17, until then a
-  remote **Machine** connects as today). Connect, New window, Disconnect stay on the Machine
+- Double click on a **Machine** browses its files (remote ones over `sh` on ssh, F5a). Connect, New window, Disconnect stay on the Machine
   ribbon tab and the right-click menu.
 
 ### Ribbon

@@ -38,7 +38,7 @@ Quitting the desk leaves every workspace, tab, and pane running on the **Server*
 | **Taskbar** space without a button | right click | Top, Bottom, Left, Right (`•` marks the current one), Collapse or Expand (left or right only), Larger, Smaller (not while collapsed) |
 | Thin line along the **Taskbar** (`▁▔▏▕`, under windows) | drag | resize: 1–4 rows at the top or bottom, 12–40 columns at the left or right |
 
-| **Files**: `Machines` row | double click, Enter | Local: browse its home; another **Machine**: connect (see below), or raise its windows when connected (browsing remote files is B17) |
+| **Files**: `Machines` row | double click, Enter | browse its home folder; a remote **Machine** is read with `sh` over ssh (both Tiers, no remote `herdr`), re-listed on Refresh and after operations rather than polled; Windows **Machines** report "not supported yet". Connect is on the Machine ribbon tab and the right-click menu |
 | **Files**: `Machines` row | right click | Connect (not connected); Show windows, New window, Disconnect (connected, **Server** or **SSH Tier** alike); Show windows, New window (Local) |
 | `«` / `»` on the last row of a left or right **Taskbar** | click | collapse it to 4 columns / expand it again (as herdr's sidebar) |
 
@@ -136,7 +136,7 @@ The same menu items act on both **Tiers**; only the behavior and the status (`Se
 
 | Item | **Server Tier** | **SSH Tier** |
 |---|---|---|
-| Connect, double click | open its workspaces as windows | open the first `ssh` window; the **Machine** then counts as connected |
+| Connect | open its workspaces as windows | open the first `ssh` window; the **Machine** then counts as connected |
 | New window | `workspace create` on the **Machine** | another local `ssh` window in its **Task** |
 | Disconnect | close its windows; its workspaces keep running | close its `ssh` windows (their workspaces end), after asking when any are open |
 
@@ -166,6 +166,6 @@ The next start restores the layout and reconnects those **Machines**; a **Machin
 - Kitty keyboard protocol is not negotiated over `terminal session control` (legacy key bytes only).
 - Choosing a tab or pane also changes the **Server**'s focused workspace, tab, and pane, so a herdr
   shell **Client** on the same **Session** follows the desk, and the other way round (ADR 0008).
-- **Files** lists Local folders only; remote **Machines** come with B17. No selection of several
-  items, file operations, or grid yet (F2, F3).
+- **Files** browses remote **Machines** but changes files on Local only (B17 F5b, F5c); Windows
+  **Machines** cannot be browsed.
 - Not yet run on Windows (V2).
