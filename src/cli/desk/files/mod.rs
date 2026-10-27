@@ -5,6 +5,7 @@
 mod grid;
 pub(super) mod listing;
 pub(super) mod ops;
+pub(super) mod remote;
 mod render;
 mod select;
 mod trash;
@@ -40,7 +41,7 @@ impl Location {
     pub fn home(machine: &str) -> Self {
         Self::Folder {
             machine: machine.to_string(),
-            path: home(),
+            path: home_of(machine),
         }
     }
 }
@@ -200,8 +201,6 @@ pub(super) enum FilesHit {
 pub(super) enum Request {
     /// Read the shown folder (again) off the UI thread.
     List,
-    /// Double-click on a remote **Machine**: connect, or show its windows (until B17).
-    OpenMachine(String),
     Connect(String),
     Disconnect(String),
     NewWindow(String),
@@ -366,15 +365,12 @@ impl Files {
     }
 
     /// Start a listing of the shown folder; app.rs runs it when this returns its generation.
-    pub fn begin_listing(&mut self) -> Option<(u64, PathBuf)> {
+    pub fn begin_listing(&mut self) -> Option<(u64, String, PathBuf)> {
         let (machine, path) = self.folder()?;
-        if machine != LOCAL_KEY {
-            return None;
-        }
-        let path = path.to_path_buf();
+        let (machine, path) = (machine.to_string(), path.to_path_buf());
         self.generation += 1;
         self.loading = true;
-        Some((self.generation, path))
+        Some((self.generation, machine, path))
     }
 
     /// A listing arrived; stale ones (an earlier location) are dropped. The cursor stays on
@@ -571,11 +567,8 @@ impl Files {
         match &self.location {
             Location::Machines => {
                 let row = self.machine(rows)?;
-                if row.key == LOCAL_KEY {
-                    self.go(Location::home(LOCAL_KEY))
-                } else {
-                    Some(Request::OpenMachine(row.key.clone()))
-                }
+                let key = row.key.clone();
+                self.go(Location::home(&key))
             }
             Location::Folder { machine, path } => {
                 let entry = self.current_entry()?;
@@ -902,8 +895,17 @@ pub(super) fn home() -> PathBuf {
         .map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 
+/// The home folder of `machine`: this user's, or `~` on a remote **Machine**.
+pub(super) fn home_of(machine: &str) -> PathBuf {
+    if machine == LOCAL_KEY {
+        home()
+    } else {
+        remote::home()
+    }
+}
+
 fn folder_name(path: &Path) -> String {
-    if path == home() {
+    if path == home() || path == remote::home() {
         return "~".to_string();
     }
     path.file_name().map_or_else(
@@ -926,7 +928,7 @@ pub(super) fn crumbs(
         path,
     };
     out.push((label(machine), Location::home(machine)));
-    let home = home();
+    let home = home_of(machine);
     let (mut base, rest) = match path.strip_prefix(&home) {
         Ok(rest) => {
             out.push(("~".to_string(), at(home.clone())));
@@ -970,7 +972,7 @@ mod tests {
 
     pub(super) fn files_with(entries: Vec<Entry>) -> Files {
         let mut f = Files::new(1, Location::home(LOCAL_KEY), Views::default());
-        let generation = f.begin_listing().map(|(g, _)| g).unwrap_or(0);
+        let generation = f.begin_listing().map(|(g, ..)| g).unwrap_or(0);
         f.listed(Listing {
             generation,
             entries: Ok(entries),
@@ -1120,7 +1122,9 @@ mod tests {
         f.views.machines.desc = true;
         assert_eq!(f.machine_order(&rows), [1, 0, 2]);
         f.move_cursor(1, &rows);
-        assert_eq!(f.open(&rows), Some(Request::OpenMachine("zeta".into())));
+        assert_eq!(f.open(&rows), Some(Request::List));
+        assert_eq!(f.location, Location::home("zeta"));
+        f.location = Location::Machines;
         f.cursor = 0;
         assert_eq!(f.open(&rows), Some(Request::List));
         assert_eq!(f.location, Location::home(LOCAL_KEY));

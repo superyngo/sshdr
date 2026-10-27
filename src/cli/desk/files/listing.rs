@@ -69,17 +69,7 @@ fn entry(e: &std::fs::DirEntry) -> Entry {
     // Follow links for the kind and size; a broken link stays a file.
     let meta = std::fs::metadata(e.path()).or_else(|_| e.metadata()).ok();
     let dir = meta.as_ref().is_some_and(std::fs::Metadata::is_dir);
-    let kind = if dir {
-        "folder".to_string()
-    } else {
-        Path::new(&name)
-            .extension()
-            .filter(|_| !name.starts_with('.') || name.matches('.').count() > 1)
-            .map_or_else(
-                || "file".to_string(),
-                |x| x.to_string_lossy().to_lowercase(),
-            )
-    };
+    let kind = kind_of(&name, dir);
     Entry {
         dir,
         size: if dir {
@@ -91,6 +81,20 @@ fn entry(e: &std::fs::DirEntry) -> Entry {
         kind,
         name,
     }
+}
+
+/// `folder`, the lowercase extension, or `file`.
+pub(super) fn kind_of(name: &str, dir: bool) -> String {
+    if dir {
+        return "folder".to_string();
+    }
+    Path::new(name)
+        .extension()
+        .filter(|_| !name.starts_with('.') || name.matches('.').count() > 1)
+        .map_or_else(
+            || "file".to_string(),
+            |x| x.to_string_lossy().to_lowercase(),
+        )
 }
 
 #[cfg(unix)]

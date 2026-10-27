@@ -49,9 +49,13 @@ impl App {
 
     /// Released after a drag: move or copy into the folder below, or type the paths into the pane.
     pub(super) fn files_drop(&mut self, win: WinId, mouse: MouseEvent) {
-        let Some(paths) = self.files.get(&win).map(|f| f.targets()) else {
+        let Some(source) = self.files.get(&win) else {
             return;
         };
+        let (paths, machine) = (
+            source.targets(),
+            source.folder().map(|(m, _)| m.to_string()),
+        );
         if paths.is_empty() {
             return;
         }
@@ -60,9 +64,12 @@ impl App {
                 let Some(f) = self.files.get(&other) else {
                     return;
                 };
-                let Some((_, dir)) = f.folder() else {
+                let Some((to, dir)) = f.folder() else {
                     return;
                 };
+                if Some(to) != machine.as_deref() {
+                    return self.files_notice(win, "copying between Machines comes later".into());
+                }
                 match hit {
                     FilesHit::Row(index) => match f.shown_entries().nth(index) {
                         Some(e) if e.dir => dir.join(&e.name),
@@ -74,6 +81,9 @@ impl App {
                 }
             }
             Some(Hit::Content(id, pane)) => {
+                if self.data.get(&id).map(|d| d.target.as_str()) != machine.as_deref() {
+                    return self.files_notice(win, "that pane is on another Machine".into());
+                }
                 let text = paths
                     .iter()
                     .map(|p| shell_quote(&p.to_string_lossy()))

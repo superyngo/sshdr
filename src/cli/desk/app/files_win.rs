@@ -151,14 +151,19 @@ impl App {
     pub(super) fn files_request(&mut self, win: WinId, request: Request) {
         match request {
             Request::List => {
-                if let Some((generation, path)) =
+                if let Some((generation, machine, path)) =
                     self.files.get_mut(&win).and_then(Files::begin_listing)
                 {
-                    listing::spawn(win, generation, path, self.events.clone());
+                    let events = self.events.clone();
+                    match self.target(&machine) {
+                        Some(Target::Machine(m)) => {
+                            files::remote::spawn(win, generation, m.clone(), path, events);
+                        }
+                        _ => listing::spawn(win, generation, path, events),
+                    }
                 }
                 self.files_title(win);
             }
-            Request::OpenMachine(key) => self.open_machine(&key),
             Request::Connect(key) => self.run_action(Action::Connect(key)),
             Request::Disconnect(key) => self.disconnect(&key),
             Request::NewWindow(key) => self.new_window_on(&key),
@@ -190,7 +195,8 @@ impl App {
     /// A new tab in the most recently used **Terminal Window** of the **Machine**, working in
     /// `path`; a new window when it has none.
     fn open_terminal_at(&mut self, machine: &str, path: &Path) {
-        let cwd = path.to_string_lossy().into_owned();
+        let cwd = files::remote::absolute(machine, path);
+        let cwd = cwd.to_string_lossy().into_owned();
         let recent = self.desk.windows.iter().rev().map(|w| w.id).find(|id| {
             self.data
                 .get(id)

@@ -605,7 +605,7 @@ mod tests {
     #[test]
     fn rows_headers_and_ribbon_report_hits() {
         let mut f = Files::new(1, Location::home(LOCAL_KEY), Views::default());
-        let generation = f.begin_listing().map_or(0, |(g, _)| g);
+        let generation = f.begin_listing().map_or(0, |(g, ..)| g);
         let entry = |name: &str| Entry {
             name: name.into(),
             dir: false,
@@ -668,7 +668,7 @@ mod tests {
     #[test]
     fn grid_cells_report_hits_and_scroll() {
         let mut f = Files::new(1, Location::home(LOCAL_KEY), Views::default());
-        let generation = f.begin_listing().map_or(0, |(g, _)| g);
+        let generation = f.begin_listing().map_or(0, |(g, ..)| g);
         let entries = (0..9)
             .map(|i| Entry {
                 name: format!("file-{i}"),

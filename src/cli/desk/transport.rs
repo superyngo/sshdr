@@ -163,6 +163,18 @@ fn ssh(target: &str, master: usize, control_master: &str) -> io::Result<Command>
     Ok(command)
 }
 
+/// `sh -c <script> sh <args>…` on a **Machine** over ControlMaster 0 (**Files**, B17).
+pub(super) fn sh(machine: &Machine, script: &str, args: &[&str]) -> io::Result<Command> {
+    let mut command = ssh(&machine.target, 0, "auto")?;
+    let mut line = format!("sh -c {} sh", quote(script));
+    for arg in args {
+        line.push(' ');
+        line.push_str(&quote(arg));
+    }
+    command.arg("-T").arg(&machine.target).arg("--").arg(line);
+    Ok(command)
+}
+
 /// Run `command` to completion; kill it after `timeout`.
 pub(super) fn output_within(command: Command, timeout: Duration) -> io::Result<Output> {
     exchange(command, None, timeout)

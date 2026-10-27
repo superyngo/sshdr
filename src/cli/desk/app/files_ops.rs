@@ -74,6 +74,8 @@ impl App {
         };
         if machine.as_deref() == Some(LOCAL_KEY) {
             ops::spawn(win, op, self.events.clone());
+        } else {
+            self.files_notice(win, "only Local files for now".into());
         }
     }
 
@@ -113,7 +115,7 @@ impl App {
         }
     }
 
-    fn files_notice(&mut self, win: WinId, text: String) {
+    pub(super) fn files_notice(&mut self, win: WinId, text: String) {
         if let Some(f) = self.files.get_mut(&win) {
             f.notice = Some(text);
             f.error = None;
