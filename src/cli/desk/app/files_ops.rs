@@ -5,9 +5,10 @@ use std::io::Write;
 
 use base64::Engine;
 
-use super::{App, DialogTarget, LOCAL_KEY};
+use super::{App, DialogTarget, Target, LOCAL_KEY};
 use crate::cli::desk::dialog::Dialog;
 use crate::cli::desk::files::ops::{self, Done, Op};
+use crate::cli::desk::files::remote;
 use crate::cli::desk::files::{Ask, Clip, Request};
 use crate::cli::desk::wm::WinId;
 
@@ -37,8 +38,8 @@ impl App {
                     self.files_notice(win, "the clipboard is empty".into());
                     return;
                 };
-                if clip.machine != LOCAL_KEY || machine.as_deref() != Some(LOCAL_KEY) {
-                    self.files_notice(win, "only Local files for now".into());
+                if Some(&clip.machine) != machine.as_ref() {
+                    self.files_notice(win, "copying between Machines comes later".into());
                     return;
                 }
                 // A cut is pasted once; a copy as often as wanted.
@@ -52,17 +53,23 @@ impl App {
                 }
             }
             Request::Undo => {
-                let Some(pairs) = shared.undo.pop() else {
+                let Some((on, pairs)) = shared.undo.pop() else {
                     self.files_notice(win, "nothing to undo".into());
                     return;
                 };
-                Op::Undo(pairs)
+                return self.files_spawn(win, on, Op::Undo(pairs));
             }
             Request::Ask(ask) => {
                 self.dialog = Some(ask_dialog(win, ask));
                 return;
             }
             Request::CopyPath(text) => {
+                let text = text
+                    .lines()
+                    .map(|l| remote::absolute(machine.as_deref().unwrap_or(LOCAL_KEY), l.as_ref()))
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let encoded = base64::engine::general_purpose::STANDARD.encode(&text);
                 let mut out = std::io::stdout();
                 let _ = write!(out, "\x1b]52;c;{encoded}\x07").and_then(|()| out.flush());
@@ -72,11 +79,18 @@ impl App {
             Request::Op(op) => op,
             _ => return,
         };
-        if machine.as_deref() == Some(LOCAL_KEY) {
-            ops::spawn(win, op, self.events.clone());
-        } else {
-            self.files_notice(win, "only Local files for now".into());
+        if let Some(machine) = machine {
+            self.files_spawn(win, machine, op);
         }
+    }
+
+    fn files_spawn(&mut self, win: WinId, machine: String, op: Op) {
+        let remote = match self.target(&machine) {
+            Some(Target::Machine(m)) => Some(m.clone()),
+            Some(Target::Local) => None,
+            None => return self.files_notice(win, format!("{machine} is not saved")),
+        };
+        ops::spawn(win, machine, remote, op, self.events.clone());
     }
 
     /// A dialog of [`ask_dialog`] was submitted with `text`.
@@ -107,7 +121,7 @@ impl App {
             f.done(&done);
         }
         if !done.undo.is_empty() {
-            self.files_shared.undo.push(done.undo);
+            self.files_shared.undo.push((done.machine, done.undo));
         }
         // Every window may show a changed folder; listing is cheap and off the UI thread.
         for other in self.files_windows() {

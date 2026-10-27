@@ -7,6 +7,7 @@ use ratatui::{buffer::Buffer, style::Style};
 use super::overflow::NativeDrag;
 use super::{App, Hit};
 use crate::cli::desk::files::ops::Op;
+use crate::cli::desk::files::remote;
 use crate::cli::desk::files::{FilesHit, Request};
 use crate::cli::desk::menu::FOCUS;
 use crate::cli::desk::server;
@@ -86,6 +87,7 @@ impl App {
                 }
                 let text = paths
                     .iter()
+                    .map(|p| remote::absolute(machine.as_deref().unwrap_or_default(), p))
                     .map(|p| shell_quote(&p.to_string_lossy()))
                     .collect::<Vec<_>>()
                     .join(" ");

@@ -6,6 +6,7 @@ mod grid;
 pub(super) mod listing;
 pub(super) mod ops;
 pub(super) mod remote;
+mod remote_ops;
 mod render;
 mod select;
 mod trash;
@@ -245,8 +246,8 @@ pub(super) struct Clip {
 #[derive(Debug, Default)]
 pub(super) struct Shared {
     pub clip: Option<Clip>,
-    /// Each entry undoes one move or rename: `(now, was)` pairs.
-    pub undo: Vec<Vec<(PathBuf, PathBuf)>>,
+    /// Each entry undoes one move or rename: its **Machine** and `(now, was)` pairs.
+    pub undo: Vec<(String, Vec<(PathBuf, PathBuf)>)>,
 }
 
 pub(super) struct Files {

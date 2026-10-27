@@ -1,4 +1,4 @@
-//! File operations of a **Files** window (F3b), Local only: paste (copy or move), rename, new
+//! File operations of a **Files** window (F3b), Local here, remote in [`super::remote_ops`]: paste (copy or move), rename, new
 //! folder, trash, and permanent delete. Each runs on a short-lived thread like a listing; the
 //! result comes back as [`DeskEvent::Done`]. Moves and renames return what undoes them.
 
@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Sender;
 
 use super::super::stream::DeskEvent;
+use super::super::transport::Machine;
 use super::super::wm::WinId;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,13 +33,26 @@ pub(in crate::cli::desk) struct Done {
     pub error: Option<String>,
     /// `(now, was)` pairs that undo this operation.
     pub undo: Vec<(PathBuf, PathBuf)>,
+    /// The **Machine** it ran on.
+    pub machine: String,
 }
 
-pub(in crate::cli::desk) fn spawn(win: WinId, op: Op, events: Sender<DeskEvent>) {
+/// Run `op` on **Machine** `machine` (`remote` unless Local) off the UI thread.
+pub(in crate::cli::desk) fn spawn(
+    win: WinId,
+    machine: String,
+    remote: Option<Machine>,
+    op: Op,
+    events: Sender<DeskEvent>,
+) {
     let spawned = std::thread::Builder::new()
         .name("desk-files-op".into())
         .spawn(move || {
-            let done = run(op);
+            let mut done = match &remote {
+                Some(remote) => super::remote_ops::run(remote, &op),
+                None => run(op),
+            };
+            done.machine = machine;
             let _ = events.send(DeskEvent::Done(win, Box::new(done)));
         });
     if let Err(err) = spawned {
